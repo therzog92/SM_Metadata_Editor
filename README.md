@@ -30,6 +30,7 @@ A simple, user-friendly tool for managing and editing metadata in Stepmania song
 - **Title**: Song title (editable)
 - **Subtitle**: Song subtitle (editable)
 - **Artist**: Song artist (editable)
+- **Genre**: Song genre (editable)
 - **Status**: Shows commit status for changes
 
 ### Editing Metadata
