@@ -19,7 +19,6 @@ print("Building one-file executable...")
 PyInstaller.__main__.run([
     '--onefile',
     '--noconsole',
-    '--icon=icon.ico',
     '--name=SM_Metadata_Editor',
     '--clean',
     '--noupx',
@@ -36,38 +35,11 @@ if os.path.exists(dest_exe):
     os.remove(dest_exe)
 shutil.move(source_exe, current_dir)
 
-# Clean up for directory build
-shutil.rmtree(dist_dir)
-shutil.rmtree(build_dir)
-if os.path.exists("SM_Metadata_Editor.spec"):
-    os.remove("SM_Metadata_Editor.spec")
-
-# Build directory version
-print("\nBuilding directory version...")
-PyInstaller.__main__.run([
-    '--noconsole',
-    '--icon=icon.ico',
-    '--name=SM_Metadata_Editor_Dir',
-    '--clean',
-    '--noupx',
-    '--noconfirm',
-    source_file
-])
-
-# Move the directory build to a "source" folder
-source_dir = os.path.join(current_dir, "SM_Metadata_Editor_Source")
-if os.path.exists(source_dir):
-    shutil.rmtree(source_dir)
-shutil.move(os.path.join(dist_dir, "SM_Metadata_Editor_Dir"), source_dir)
-
 # Clean up build directories
 shutil.rmtree(dist_dir)
 shutil.rmtree(build_dir)
 if os.path.exists("SM_Metadata_Editor.spec"):
     os.remove("SM_Metadata_Editor.spec")
-if os.path.exists("SM_Metadata_Editor_Dir.spec"):
-    os.remove("SM_Metadata_Editor_Dir.spec")
 
 print(f"\nBuild complete!")
-print(f"One-file executable created at: {dest_exe}")
-print(f"Directory version created at: {source_dir}")
+print(f"Executable created at: {dest_exe}")
