@@ -5,32 +5,201 @@ import subprocess
 import pygame
 from collections import defaultdict
 import fnmatch
+import asyncio
+from shazamio import Shazam
+import nest_asyncio
 
+# Constants
+SUPPORTED_EXTENSIONS = {'.sm', '.ssc'}
+SUPPORTED_AUDIO = {'.ogg', '.mp3', '.wav'}
+METADATA_FIELDS = ['TITLE', 'SUBTITLE', 'ARTIST', 'GENRE', 'MUSIC']
+SUPPORTED_ENCODINGS = ['utf-8-sig', 'utf-8', 'shift-jis', 'latin1', 'cp1252']
+COLUMN_WIDTHS = {
+    'checkbox': 30,
+    'actions': 130,
+    'type': 75,
+    'parent_dir': 160,
+    'title': 250,
+    'subtitle': 250,
+    'artist': 250,
+    'genre': 250,
+    'status': 50
+}
+SHAZAM_BUTTON_NORMAL = {
+    "text": "Shazam Mode: OFF",
+    "style": "Modern.TButton"
+}
+SHAZAM_BUTTON_ACTIVE = {
+    "text": "SHAZAM ON!",
+    "style": "Shazam.TButton"
+}
 
+class MetadataUtil:
+    @staticmethod
+    def read_file_with_encoding(filepath):
+        for encoding in SUPPORTED_ENCODINGS:
+            try:
+                with open(filepath, 'r', encoding=encoding) as file:
+                    return file.readlines(), encoding
+            except UnicodeDecodeError:
+                continue
+        return None, None
+        
+    @staticmethod
+    def read_metadata(filepath):
+        content, encoding = MetadataUtil.read_file_with_encoding(filepath)
+        if not content:
+            return {}
+            
+        metadata = {}
+        for line in content:
+            if line.startswith('#') and ':' in line:
+                key, value = line.strip().split(':', 1)
+                key = key[1:]
+                metadata[key] = value.rstrip(';')
+        return metadata
+        
+    @staticmethod
+    def write_metadata(filepath, metadata):
+        content, encoding = MetadataUtil.read_file_with_encoding(filepath)
+        if not content:
+            return False
+            
+        for i, line in enumerate(content):
+            for key, value in metadata.items():
+                if line.startswith(f'#{key}:'):
+                    content[i] = f'#{key}:{value};\n'
+                    
+        try:
+            with open(filepath, 'w', encoding=encoding) as file:
+                file.writelines(content)
+            return True
+        except Exception:
+            return False
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip = None
+        self.scheduled_hide = None
+        self.scheduled_show = None
+        self.widget.bind("<Enter>", self.schedule_show)
+        self.widget.bind("<Leave>", self.schedule_hide)
 
+    def schedule_show(self, event=None):
+        # Cancel any pending hide
+        if self.scheduled_hide:
+            self.widget.after_cancel(self.scheduled_hide)
+            self.scheduled_hide = None
+        
+        # Cancel any pending show to prevent multiple schedules
+        if self.scheduled_show:
+            self.widget.after_cancel(self.scheduled_show)
+        
+        # Schedule new show with small delay
+        self.scheduled_show = self.widget.after(200, self.show_tooltip)
+
+    def schedule_hide(self, event=None):
+        # Cancel any pending show
+        if self.scheduled_show:
+            self.widget.after_cancel(self.scheduled_show)
+            self.scheduled_show = None
+            
+        # Schedule hide with small delay
+        self.scheduled_hide = self.widget.after(200, self.hide_tooltip)
+
+    def show_tooltip(self, event=None):
+        if self.tooltip:
+            return
+        
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height()
+
+        self.tooltip = tk.Toplevel(self.widget)
+        self.tooltip.wm_overrideredirect(True)
+        self.tooltip.wm_geometry(f"+{x}+{y}")
+
+        label = ttk.Label(self.tooltip, text=self.text, 
+                         justify=tk.LEFT,
+                         background="#ffffe0", 
+                         relief="solid", 
+                         borderwidth=1)
+        label.pack()
+
+    def hide_tooltip(self, event=None):
+        if self.tooltip:
+            self.tooltip.destroy()
+            self.tooltip = None
 
 class MetadataEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("Stepmania Metadata Editor")
-        self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self.cleanup_and_exit)
         
-        # Initialize pygame mixer for audio
-        os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"  # Add this line
-        pygame.mixer.init()
+        # Initialize tracking variables
         self.current_playing = None
+        self.selected_entries = []
+        self.file_entries = []
+        self.selected_directories = set()
+        self.bulk_edit_enabled = False
+        self.shazam_mode = False
         
-        # Configure modern style
+        # Initialize pygame mixer
+        os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+        pygame.mixer.init()
+        
+        # Configure styles
+        self.configure_styles()
+        
+        # Initialize UI components
+        self.setup_ui()
+        
+        # Add Shazam functionality
+        nest_asyncio.apply()
+        self.shazam = Shazam()
+        self.loop = asyncio.get_event_loop()
+        
+        # Add Shazam button to button_frame
+        self.shazam_button = ttk.Button(
+            self.button_frame,
+            text=SHAZAM_BUTTON_NORMAL["text"],
+            style=SHAZAM_BUTTON_NORMAL["style"],
+            command=self.toggle_shazam_mode
+        )
+        self.shazam_button.pack(side=tk.RIGHT, padx=5)
+        
+    def configure_styles(self):
         style = ttk.Style()
-        style.configure("Modern.TFrame", background="#f0f0f0")
-        style.configure("Modern.TButton", padding=5, relief="flat", background="#4a90e2", foreground="black")
-        style.configure("Modern.TLabel", background="#f0f0f0", foreground="#333333", font=("Helvetica", 10))
-        style.configure("Modern.TEntry", padding=5, relief="flat")
-        style.configure("Header.TButton", font=("Helvetica", 10, "bold"))
+        styles = {
+            "Modern.TFrame": {"background": "#f0f0f0"},
+            "Modern.TButton": {"padding": 5, "relief": "flat", "background": "#4a90e2", "foreground": "black"},
+            "Modern.TLabel": {"background": "#f0f0f0", "foreground": "#333333", "font": ("Helvetica", 10)},
+            "Modern.TEntry": {"padding": 5, "relief": "flat"},
+            "Header.TButton": {"font": ("Helvetica", 10, "bold")},
+            "Modified.TEntry": {"fieldbackground": "lightblue"},
+            "Committed.TEntry": {"fieldbackground": "lightgreen"},
+            "Warning.TButton": {"background": "orange"},
+            "Success.TButton": {"background": "lightgreen"},
+            "Shazam.TEntry": {
+                "padding": 5,
+                "foreground": "green",
+            },
+        }
         
+        for style_name, properties in styles.items():
+            style.configure(style_name, **properties)
+        
+        style = ttk.Style()
+        style.configure("Shazam.TButton", 
+                       background="lightgreen",
+                       padding=5,
+                       relief="flat")
+        
+    def setup_ui(self):
         # Create main frame
-        self.main_frame = ttk.Frame(root, padding="10", style="Modern.TFrame")
+        self.main_frame = ttk.Frame(self.root, padding="10", style="Modern.TFrame")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Create top button frame
@@ -162,10 +331,6 @@ class MetadataEditor:
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Store file entries and sorting state
-        self.file_entries = []
-        self.sort_reverse = {'parent_directory': False, 'title': False, 'subtitle': False, 'artist': False, 'genre': False}
-        
     def toggle_bulk_edit(self):
         self.bulk_edit_enabled = not self.bulk_edit_enabled
         if self.bulk_edit_enabled:
@@ -183,13 +348,16 @@ class MetadataEditor:
                 entry['checkbox_var'].set(False)
             self.selected_entries.clear()
             
+            # Make sure bulk edit button stays visible
+            if hasattr(self, 'bulk_edit_button'):
+                self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
+        
     def apply_bulk_edit(self):
         if not self.selected_entries:
             return
-            
-        # Get values from bulk edit fields
+        
+        # Get values from bulk edit fields - removed 'title' from here
         new_values = {
-            'title': self.bulk_fields['title'].get(),
             'subtitle': self.bulk_fields['subtitle'].get(),
             'artist': self.bulk_fields['artist'].get(),
             'genre': self.bulk_fields['genre'].get()
@@ -205,10 +373,21 @@ class MetadataEditor:
                     
     def on_checkbox_toggle(self, entry_data):
         if entry_data['checkbox_var'].get():
-            self.selected_entries.append(entry_data)
+            if entry_data not in self.selected_entries:
+                self.selected_entries.append(entry_data)
         else:
-            self.selected_entries.remove(entry_data)
-            
+            if entry_data in self.selected_entries:
+                self.selected_entries.remove(entry_data)
+        
+        # Update commit all button text
+        self.update_commit_all_button()
+        
+        # Show/hide bulk edit controls based on selection state
+        if self.selected_entries and not self.bulk_edit_enabled:
+            self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
+        elif not self.selected_entries and not self.bulk_edit_enabled:
+            self.bulk_edit_button.pack_forget()
+        
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
@@ -226,6 +405,9 @@ class MetadataEditor:
                 self.current_playing = None
                 return
         
+        # Normalize path to handle backslashes
+        music_path = os.path.normpath(music_path)
+        
         # First, try exact match
         if os.path.exists(music_path):
             try:
@@ -233,6 +415,20 @@ class MetadataEditor:
                 pygame.mixer.music.play()
                 play_btn.configure(text="⏹")
                 self.current_playing = play_btn
+                
+                # Add Shazam analysis if mode is active
+                if self.shazam_mode:
+                    result = self.loop.run_until_complete(self.analyze_single_file(music_path))
+                    if result and 'track' in result:
+                        track = result['track']
+                        # Clean up special characters and hashtags
+                        shazam_data = {
+                            'title': track.get('title', '').replace('#', '(Hashtag)').replace(':', '').replace(';', ''),
+                            'artist': track.get('subtitle', '').replace('#', '(Hashtag)').replace(':', '').replace(';', ''),
+                            'genre': track.get('genres', {}).get('primary', '').replace('#', '(Hashtag)').replace(':', '').replace(';', '')
+                        }
+                        entry_frame = play_btn.master.master
+                        self.show_shazam_results(entry_frame, shazam_data)
                 return
             except Exception as e:
                 print(f"Error playing audio {music_path}: {str(e)}")
@@ -252,6 +448,91 @@ class MetadataEditor:
                     return
                 except Exception as e:
                     print(f"Error playing audio {full_path}: {str(e)}")
+
+    def toggle_shazam_mode(self):
+        if self.shazam_mode:
+            self.shazam_button.configure(**SHAZAM_BUTTON_NORMAL)
+            self.restore_normal_mode()
+            if hasattr(self, 'shazam'):
+                del self.shazam
+                del self.loop
+        else:
+            self.shazam = Shazam()
+            nest_asyncio.apply()
+            self.loop = asyncio.get_event_loop()
+            self.shazam_button.configure(**SHAZAM_BUTTON_ACTIVE)
+        
+        self.shazam_mode = not self.shazam_mode
+
+    def show_shazam_results(self, entry_frame, shazam_data):
+        column_positions = {
+            'title': 4,
+            'artist': 6,
+            'genre': 7
+        }
+        
+        for field, value in shazam_data.items():
+            if not value:
+                continue
+            
+            entry_data = next(
+                (e for e in self.file_entries if e['frame'] == entry_frame),
+                None
+            )
+            if not entry_data:
+                continue
+
+            current = entry_data['entries'][field]['var'].get()
+            if current == value:
+                entry_data['entries'][field]['entry'].configure(style="Shazam.TEntry")
+                continue
+
+            # Calculate max characters per line (roughly 8 pixels per character)
+            max_chars = COLUMN_WIDTHS[field.lower()] // 8
+            
+            # Create button text with conditional truncation
+            current_text = f"{current}..." if len(current) > max_chars else current
+            new_text = f"{value}..." if len(value) > max_chars else value
+            button_text = f"Current: {current_text}\nNew: {new_text}"
+            full_text = f"Current: {current}\nNew: {value}"
+            
+            btn = ttk.Button(
+                entry_frame,
+                text=button_text,
+                command=lambda f=field, v=value, e=entry_data: self.apply_shazam_value(f, v, e),
+                style="Modern.TButton",
+                width=COLUMN_WIDTHS[field.lower()] // 8
+            )
+            
+            # Only add tooltip if text was truncated
+            if len(current) > max_chars or len(value) > max_chars:
+                ToolTip(btn, full_text)
+            
+            entry_data['entries'][field]['entry'].grid_remove()
+            col = column_positions[field]
+            btn.grid(row=0, column=col, padx=5, sticky='ew')
+            entry_data['entries'][field]['shazam_btn'] = btn
+
+    def apply_shazam_value(self, field, value, entry_data):
+        entry_data['entries'][field]['var'].set(value)
+        entry_data['entries'][field]['shazam_btn'].destroy()
+        entry_data['entries'][field]['entry'].grid()
+        
+        # Trigger normal change detection
+        self.on_entry_change(
+            entry_data['frame'],
+            entry_data['filepaths'],
+            field,
+            entry_data['entries'][field]
+        )
+
+    def restore_normal_mode(self):
+        for entry_data in self.file_entries:
+            for field_data in entry_data['entries'].values():
+                if 'shazam_btn' in field_data:
+                    field_data['shazam_btn'].destroy()
+                    field_data['entry'].grid()
+                    field_data.pop('shazam_btn')
 
     def show_metadata_editor(self, filepaths):
         # Create new window
@@ -396,7 +677,11 @@ class MetadataEditor:
             ext = os.path.splitext(path)[1].upper()[1:]
             if ext not in file_types:
                 file_types.append(ext)
-        type_label = ttk.Label(frame, text="+".join(file_types), style="Modern.TLabel")
+        type_label = ttk.Label(
+            frame, 
+            text="+".join(file_types) if len(filepaths) > 1 else file_types[0], 
+            style="Modern.TLabel"
+        )
         type_label.grid(row=0, column=2, padx=5)
         
         # Parent directory (uneditable)
@@ -645,44 +930,142 @@ class MetadataEditor:
         
         # Create entries for each unique song
         for _, filepaths in file_groups.items():
-            # Use metadata from first file
-            metadata = self.read_metadata(filepaths[0])
+            metadata_list = [self.read_metadata(fp) for fp in filepaths]
             parent_parent_dir = os.path.basename(os.path.dirname(os.path.dirname(filepaths[0])))
             
-            self.create_file_entry(
-                filepaths,
-                parent_parent_dir,
-                metadata.get('TITLE', ''),
-                metadata.get('SUBTITLE', ''),
-                metadata.get('ARTIST', ''),
-                metadata.get('GENRE', ''),
-                metadata.get('MUSIC', '')
-            )
+            # Check if we need separate entries
+            need_separate = False
+            combined_metadata = {}
+            
+            for field in ['TITLE', 'SUBTITLE', 'ARTIST', 'GENRE']:
+                values = set()
+                for metadata in metadata_list:
+                    value = metadata.get(field, '').strip()
+                    if value and not value.endswith(':;'):  # If field exists and has content
+                        values.add(value)
+                
+                if len(values) > 1:  # If we have different non-empty values
+                    need_separate = True
+                    break
+                elif values:  # If we have at least one non-empty value
+                    combined_metadata[field] = values.pop()  # Use the non-empty value
+                else:
+                    combined_metadata[field] = ''  # No valid value found
+            
+            if need_separate:
+                # Create separate entries for each file
+                for filepath, metadata in zip(filepaths, metadata_list):
+                    self.create_file_entry(
+                        [filepath],  # Single file path
+                        parent_parent_dir,
+                        metadata.get('TITLE', ''),
+                        metadata.get('SUBTITLE', ''),
+                        metadata.get('ARTIST', ''),
+                        metadata.get('GENRE', ''),
+                        metadata.get('MUSIC', '')
+                    )
+            else:
+                # Create combined entry
+                self.create_file_entry(
+                    filepaths,
+                    parent_parent_dir,
+                    combined_metadata.get('TITLE', ''),
+                    combined_metadata.get('SUBTITLE', ''),
+                    combined_metadata.get('ARTIST', ''),
+                    combined_metadata.get('GENRE', ''),
+                    metadata_list[0].get('MUSIC', '')  # Use music from first file
+                )
     
     def read_metadata(self, filepath):
         metadata = {}
-        # List of encodings to try
-        encodings = ['utf-8-sig', 'utf-8', 'shift-jis', 'latin1', 'cp1252']
+        target_fields = {'#' + field + ':' for field in METADATA_FIELDS}
         
-        for encoding in encodings:
+        for encoding in SUPPORTED_ENCODINGS:
             try:
                 with open(filepath, 'r', encoding=encoding) as file:
                     for line in file:
-                        if line.startswith(('#TITLE:', '#SUBTITLE:', '#ARTIST:', '#GENRE:', '#MUSIC:')):
+                        if any(line.startswith(field) for field in target_fields):
                             key, value = line.strip().split(':', 1)
                             key = key[1:]  # Remove the # character
                             value = value.rstrip(';')
                             metadata[key] = value
-                # If we successfully read the file, break the loop
-                break
+                            
+                            # Early exit if we found all fields
+                            if len(metadata) == len(METADATA_FIELDS):
+                                break
+                    break  # Successfully read file, exit encoding loop
             except UnicodeDecodeError:
-                # Try next encoding
                 continue
             except Exception as e:
                 print(f"Error reading metadata from {filepath}: {str(e)}")
                 break
             
         return metadata
+
+    async def analyze_single_file(self, file_path):
+        try:
+            return await self.shazam.recognize(file_path)
+        except Exception as e:
+            print(f"Shazam analysis error: {str(e)}")
+            return None
+
+    def cleanup_and_exit(self):
+        # Stop any playing music
+        if pygame.mixer.get_init():
+            if pygame.mixer.music.get_busy():
+                pygame.mixer.music.stop()
+            pygame.mixer.quit()
+        
+        # Clear file entries
+        for entry in self.file_entries:
+            entry['frame'].destroy()
+        self.file_entries.clear()
+        
+        self.root.destroy()
+
+class FileEntry:
+    def __init__(self, parent_frame, filepaths, metadata, callbacks):
+        self.frame = ttk.Frame(parent_frame, style="Modern.TFrame")
+        self.filepaths = filepaths
+        self.metadata = metadata
+        self.callbacks = callbacks
+        self.entries = {}
+        self.checkbox_var = tk.BooleanVar()
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        self.frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Configure grid columns
+        for i, width in enumerate(COLUMN_WIDTHS.values()):
+            self.frame.grid_columnconfigure(i, minsize=width)
+            
+        self.create_checkbox()
+        self.create_actions()
+        self.create_type_label()
+        self.create_metadata_entries()
+        
+    def create_metadata_entries(self):
+        for col, field in enumerate(METADATA_FIELDS, start=4):
+            var = tk.StringVar(value=self.metadata.get(field, ''))
+            entry = ttk.Entry(self.frame, textvariable=var, style="Modern.TEntry")
+            entry.grid(row=0, column=col, padx=5, sticky='ew')
+            self.entries[field.lower()] = {
+                'var': var,
+                'entry': entry,
+                'original': self.metadata.get(field, '')
+            }
+            var.trace_add('write', lambda *args, f=field.lower(): 
+                         self.callbacks['on_change'](self, f))
+                         
+    def has_changes(self):
+        return any(e['var'].get() != e['original'] for e in self.entries.values())
+        
+    def commit_changes(self):
+        for entry_data in self.entries.values():
+            entry_data['original'] = entry_data['var'].get()
+            entry_data['entry'].configure(style='Committed.TEntry')
 
 def main():
     root = tk.Tk()
