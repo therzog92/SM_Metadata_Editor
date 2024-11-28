@@ -37,12 +37,23 @@ class MetadataEditor:
         self.button_frame = ttk.Frame(self.main_frame, style="Modern.TFrame")
         self.button_frame.pack(fill=tk.X, pady=(0,10))
         
-        # Create directory picker button
-        self.dir_button = ttk.Button(self.button_frame, text="Select Directory", 
+        # Create directory picker button frame
+        self.dir_button_frame = ttk.Frame(self.button_frame, style="Modern.TFrame")
+        self.dir_button_frame.pack(side=tk.LEFT)
+        
+        # Create directory picker buttons
+        self.dir_button = ttk.Button(self.dir_button_frame, text="Add Directory", 
                                    command=self.pick_directory, style="Modern.TButton")
         self.dir_button.pack(side=tk.LEFT, padx=5)
         
-
+        # Clear directories button
+        self.clear_button = ttk.Button(self.dir_button_frame, text="Clear All", 
+                                    command=self.clear_directories, style="Modern.TButton")
+        self.clear_button.pack(side=tk.LEFT, padx=5)
+        
+        # Store selected directories
+        self.selected_directories = set()
+        
         # Create GitHub link button
         github_frame = ttk.Frame(self.root, style="Modern.TFrame")  # Changed root to self.root
         github_frame.pack(side=tk.TOP, anchor=tk.E, padx=10, pady=5)
@@ -83,7 +94,7 @@ class MetadataEditor:
         
         # Create bulk edit fields
         self.bulk_fields = {}
-        fields = ['Title', 'Subtitle', 'Artist', 'Genre']
+        fields = ['Subtitle', 'Artist', 'Genre']
         for i, field in enumerate(fields):
             label = ttk.Label(self.bulk_edit_controls, text=field+":", style="Modern.TLabel")
             label.grid(row=0, column=i*2, padx=5, pady=5)
@@ -205,6 +216,7 @@ class MetadataEditor:
         directory = os.path.dirname(music_path)
         music_name = os.path.basename(music_path)
         base_name = os.path.splitext(music_name)[0]
+        extension = os.path.splitext(music_name)[1].lower()
         
         # Stop current playing audio if any
         if self.current_playing:
@@ -213,10 +225,24 @@ class MetadataEditor:
             if self.current_playing == play_btn:
                 self.current_playing = None
                 return
-                
-        # Search for matching audio file
+        
+        # First, try exact match
+        if os.path.exists(music_path):
+            try:
+                pygame.mixer.music.load(music_path)
+                pygame.mixer.music.play()
+                play_btn.configure(text="⏹")
+                self.current_playing = play_btn
+                return
+            except Exception as e:
+                print(f"Error playing audio {music_path}: {str(e)}")
+        
+        # If exact match fails, try to find any file that ends with the base filename
+        base_search = base_name.split()[-1].lower()  # Get last word before extension
         for file in os.listdir(directory):
-            if file.lower().endswith(('.ogg', '.mp3', '.wav')) and base_name.lower() in file.lower():
+            file_lower = file.lower()
+            if (file_lower.endswith(f"{base_search}{extension}") and 
+                file_lower.endswith(('.ogg', '.mp3', '.wav'))):
                 try:
                     full_path = os.path.join(directory, file)
                     pygame.mixer.music.load(full_path)
@@ -226,7 +252,6 @@ class MetadataEditor:
                     return
                 except Exception as e:
                     print(f"Error playing audio {full_path}: {str(e)}")
-                    return
 
     def show_metadata_editor(self, filepaths):
         # Create new window
@@ -333,12 +358,31 @@ class MetadataEditor:
                              style="Modern.TButton")
         open_btn.pack(side=tk.LEFT, padx=2)
         
-        # Play button
-        music_path = os.path.join(os.path.dirname(filepaths[0]), music_file)
-        play_btn = ttk.Button(actions_frame, text="▶", width=2,
-                             command=lambda: self.play_audio(music_path, play_btn),
-                             style="Modern.TButton")
-        play_btn.pack(side=tk.LEFT, padx=2)
+        # Play button - only add if valid music file exists
+        if music_file:  # First check if music_file is not empty
+            directory = os.path.dirname(filepaths[0])
+            music_path = os.path.join(directory, music_file)
+            base_name = os.path.splitext(music_file)[0].split()[-1].lower()  # Get last word before extension
+            extension = os.path.splitext(music_file)[1].lower()
+            has_music = False
+            
+            # First check for exact file
+            if os.path.exists(music_path):
+                has_music = True
+            else:
+                # If exact match fails, look for any file ending with the base name
+                for file in os.listdir(directory):
+                    file_lower = file.lower()
+                    if (file_lower.endswith(f"{base_name}{extension}") and 
+                        file_lower.endswith(('.ogg', '.mp3', '.wav'))):
+                        has_music = True
+                        break
+            
+            if has_music:
+                play_btn = ttk.Button(actions_frame, text="▶", width=2,
+                                    command=lambda: self.play_audio(music_path, play_btn),
+                                    style="Modern.TButton")
+                play_btn.pack(side=tk.LEFT, padx=2)
 
         # Edit metadata button
         edit_btn = ttk.Button(actions_frame, text="✎", width=2,
@@ -457,25 +501,71 @@ class MetadataEditor:
                 self.commit_changes(entry['frame'], entry['filepaths'], entry['entries'])
             
     def commit_changes(self, frame, filepaths, entries):
+        encodings = ['utf-8-sig', 'utf-8', 'shift-jis', 'latin1', 'cp1252']
+        
         for filepath in filepaths:
+            success = False
+            file_content = None
+            
+            # First, try to read the file with different encodings
+            for encoding in encodings:
+                try:
+                    with open(filepath, 'r', encoding=encoding) as file:
+                        file_content = file.readlines()
+                        used_encoding = encoding
+                        success = True
+                        break
+                except UnicodeDecodeError:
+                    continue
+                except Exception as e:
+                    print(f"Error reading file {filepath}: {str(e)}")
+                    return
+            
+            if not success or file_content is None:
+                print(f"Could not read file {filepath} with any supported encoding")
+                return
+            
             try:
-                # Read file content
-                with open(filepath, 'r', encoding='utf-8') as file:
-                    lines = file.readlines()
+                # Track if we need to add new fields and their position
+                title_line_index = None
+                fields_to_add = set()  # Changed to set to ensure uniqueness
+                existing_fields = set()  # Track which fields already exist
                 
-                # Update the lines
-                for i, line in enumerate(lines):
+                # First pass: identify existing fields and update them
+                for i, line in enumerate(file_content):
+                    if line.startswith('#TITLE:'):
+                        title_line_index = i
+                    
                     for field, entry_data in entries.items():
                         field_upper = field.upper()
                         if line.startswith(f'#{field_upper}:'):
+                            existing_fields.add(field_upper)
                             new_value = entry_data['var'].get()
-                            lines[i] = f'#{field_upper}:{new_value};\n'
-                            entry_data['original'] = new_value
-                            entry_data['entry'].configure(style='Committed.TEntry')
+                            if new_value != entry_data['original']:
+                                file_content[i] = f'#{field_upper}:{new_value};\n'
+                                entry_data['original'] = new_value
+                                entry_data['entry'].configure(style='Committed.TEntry')
                 
-                # Write back to file
-                with open(filepath, 'w', encoding='utf-8') as file:
-                    file.writelines(lines)
+                # Identify which fields need to be added
+                for field, entry_data in entries.items():
+                    field_upper = field.upper()
+                    if (field_upper not in existing_fields and 
+                        entry_data['var'].get() != entry_data['original'] and 
+                        entry_data['var'].get()):  # Only add if there's a value
+                        fields_to_add.add((field_upper, entry_data['var'].get()))
+                
+                # Second pass: add new fields after #TITLE
+                if title_line_index is not None and fields_to_add:
+                    # Convert set to list and sort for consistent ordering
+                    sorted_fields = sorted(list(fields_to_add))
+                    for field_upper, value in sorted_fields:
+                        new_line = f'#{field_upper}:{value};\n'
+                        title_line_index += 1  # Insert after previous insertion
+                        file_content.insert(title_line_index, new_line)
+                
+                # Write back to file using the same encoding we successfully read with
+                with open(filepath, 'w', encoding=used_encoding) as file:
+                    file.writelines(file_content)
             except Exception as e:
                 print(f"Error updating file {filepath}: {str(e)}")
                 return
@@ -518,9 +608,17 @@ class MetadataEditor:
     def pick_directory(self):
         directory = filedialog.askdirectory()
         if directory:
-            self.load_files(directory)
+            self.selected_directories.add(directory)
+            self.load_files_from_all_directories()
     
-    def load_files(self, directory):
+    def clear_directories(self):
+        self.selected_directories.clear()
+        # Clear existing entries
+        for entry in self.file_entries:
+            entry['frame'].destroy()
+        self.file_entries.clear()
+    
+    def load_files_from_all_directories(self):
         # Clear existing entries
         for entry in self.file_entries:
             entry['frame'].destroy()
@@ -535,16 +633,18 @@ class MetadataEditor:
         
         # Track files by base name to combine SM and SSC
         file_groups = defaultdict(list)
-            
-        for root, _, files in os.walk(directory):
-            for file in files:
-                if file.endswith(('.sm', '.ssc')):
-                    filepath = os.path.join(root, file)
-                    base_name = os.path.splitext(file)[0]
-                    file_groups[base_name].append(filepath)
+        
+        # Process all selected directories
+        for directory in self.selected_directories:
+            for root, _, files in os.walk(directory):
+                for file in files:
+                    if file.endswith(('.sm', '.ssc')):
+                        filepath = os.path.join(root, file)
+                        base_name = os.path.splitext(file)[0]
+                        file_groups[f"{os.path.dirname(filepath)}_{base_name}"].append(filepath)
         
         # Create entries for each unique song
-        for base_name, filepaths in file_groups.items():
+        for _, filepaths in file_groups.items():
             # Use metadata from first file
             metadata = self.read_metadata(filepaths[0])
             parent_parent_dir = os.path.basename(os.path.dirname(os.path.dirname(filepaths[0])))
