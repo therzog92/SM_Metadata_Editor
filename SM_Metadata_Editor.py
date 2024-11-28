@@ -146,6 +146,15 @@ class MetadataEditor:
         self.bulk_edit_enabled = False
         self.shazam_mode = False
         
+        # Initialize sort tracking
+        self.sort_reverse = {
+            'parent_directory': False,
+            'title': False,
+            'subtitle': False,
+            'artist': False,
+            'genre': False
+        }
+        
         # Initialize pygame mixer
         os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
         pygame.mixer.init()
@@ -169,7 +178,6 @@ class MetadataEditor:
             command=self.toggle_shazam_mode
         )
         self.shazam_button.pack(side=tk.RIGHT, padx=5)
-        
     def configure_styles(self):
         style = ttk.Style()
         styles = {
@@ -421,11 +429,22 @@ class MetadataEditor:
                     result = self.loop.run_until_complete(self.analyze_single_file(music_path))
                     if result and 'track' in result:
                         track = result['track']
-                        # Clean up special characters and hashtags
+                        # Clean up special characters
+                        special_chars = ['\\', '#', ':', ';', '*', '?', '"', '<', '>', '|',
+                                       '%', '&', "'", '`', '~', '$', '!', '@']
+                        title = track.get('title', '')
+                        artist = track.get('subtitle', '')
+                        genre = track.get('genres', {}).get('primary', '')
+                        
+                        for char in special_chars:
+                            title = title.replace(char, '\\' + char)
+                            artist = artist.replace(char, '\\' + char)
+                            genre = genre.replace(char, '\\' + char)
+                            
                         shazam_data = {
-                            'title': track.get('title', '').replace('#', '(Hashtag)').replace(':', '').replace(';', ''),
-                            'artist': track.get('subtitle', '').replace('#', '(Hashtag)').replace(':', '').replace(';', ''),
-                            'genre': track.get('genres', {}).get('primary', '').replace('#', '(Hashtag)').replace(':', '').replace(';', '')
+                            'title': title,
+                            'artist': artist,
+                            'genre': genre
                         }
                         entry_frame = play_btn.master.master
                         self.show_shazam_results(entry_frame, shazam_data)
