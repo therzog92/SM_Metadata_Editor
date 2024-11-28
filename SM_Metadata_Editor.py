@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, ttk, messagebox
 import os
 import subprocess
 import pygame
@@ -450,20 +450,29 @@ class MetadataEditor:
                     print(f"Error playing audio {full_path}: {str(e)}")
 
     def toggle_shazam_mode(self):
-        if self.shazam_mode:
+        # Check internet connection first
+        try:
+            import urllib.request
+            urllib.request.urlopen('http://google.com', timeout=1)
+        except:
+            messagebox.showwarning(
+                "No Internet Connection",
+                "Shazam mode requires an internet connection. The feature will be disabled until connection is restored."
+            )
             self.shazam_button.configure(**SHAZAM_BUTTON_NORMAL)
-            self.restore_normal_mode()
-            if hasattr(self, 'shazam'):
-                del self.shazam
-                del self.loop
-        else:
+            return
+
+        if not hasattr(self, 'shazam'):
             self.shazam = Shazam()
             nest_asyncio.apply()
             self.loop = asyncio.get_event_loop()
-            self.shazam_button.configure(**SHAZAM_BUTTON_ACTIVE)
         
         self.shazam_mode = not self.shazam_mode
-
+        if self.shazam_mode:
+            self.shazam_button.configure(**SHAZAM_BUTTON_ACTIVE)
+        else:
+            self.shazam_button.configure(**SHAZAM_BUTTON_NORMAL)
+        
     def show_shazam_results(self, entry_frame, shazam_data):
         column_positions = {
             'title': 4,
