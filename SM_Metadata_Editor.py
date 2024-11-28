@@ -8,6 +8,8 @@ import fnmatch
 
 
 
+
+
 class MetadataEditor:
     def __init__(self, root):
         self.root = root
@@ -31,10 +33,70 @@ class MetadataEditor:
         self.main_frame = ttk.Frame(root, padding="10", style="Modern.TFrame")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
+        # Create top button frame
+        self.button_frame = ttk.Frame(self.main_frame, style="Modern.TFrame")
+        self.button_frame.pack(fill=tk.X, pady=(0,10))
+        
         # Create directory picker button
-        self.dir_button = ttk.Button(self.main_frame, text="Select Directory", 
+        self.dir_button = ttk.Button(self.button_frame, text="Select Directory", 
                                    command=self.pick_directory, style="Modern.TButton")
-        self.dir_button.pack(pady=10)
+        self.dir_button.pack(side=tk.LEFT, padx=5)
+        
+
+        # Create GitHub link button
+        github_frame = ttk.Frame(self.root, style="Modern.TFrame")  # Changed root to self.root
+        github_frame.pack(side=tk.TOP, anchor=tk.E, padx=10, pady=5)
+
+        # Create GitHub logo using Unicode character (alternative to image)
+        github_button = ttk.Button(
+            github_frame, 
+            text="\u25D3 GitHub",  # Unicode octocat-like symbol
+            style="Modern.TButton",
+            command=lambda: os.startfile("https://github.com/therzog92/SM_Metadata_Editor") if os.name == 'nt' 
+                    else subprocess.run(['open', "https://github.com/therzog92/SM_Metadata_Editor"])
+        )
+        github_button.pack(side=tk.RIGHT)
+
+        # Configure GitHub button style
+        style = ttk.Style()
+        style.configure(
+            "Modern.TButton",
+            font=("Helvetica", 10),
+            padding=5
+        )
+
+        # Create bulk edit button
+        self.bulk_edit_enabled = False
+        self.bulk_edit_button = ttk.Button(self.button_frame, text="Bulk Edit",
+                                         command=self.toggle_bulk_edit, style="Modern.TButton")
+        self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
+        
+        # Create commit all button (initially hidden)
+        self.commit_all_button = ttk.Button(self.button_frame, text="Commit All (0)",
+                                          command=self.commit_all_changes, style="Modern.TButton")
+        self.commit_all_button.pack(side=tk.RIGHT, padx=5)
+        self.commit_all_button.pack_forget()
+        
+        # Create bulk edit controls frame (initially hidden)
+        self.bulk_edit_controls = ttk.Frame(self.main_frame, style="Modern.TFrame")
+        self.selected_entries = []
+        
+        # Create bulk edit fields
+        self.bulk_fields = {}
+        fields = ['Title', 'Subtitle', 'Artist', 'Genre']
+        for i, field in enumerate(fields):
+            label = ttk.Label(self.bulk_edit_controls, text=field+":", style="Modern.TLabel")
+            label.grid(row=0, column=i*2, padx=5, pady=5)
+            
+            var = tk.StringVar()
+            entry = ttk.Entry(self.bulk_edit_controls, textvariable=var, style="Modern.TEntry")
+            entry.grid(row=0, column=i*2+1, padx=5, pady=5)
+            self.bulk_fields[field.lower()] = var
+            
+        # Add apply button
+        self.apply_bulk = ttk.Button(self.bulk_edit_controls, text="Apply to Selected",
+                                   command=self.apply_bulk_edit, style="Modern.TButton")
+        self.apply_bulk.grid(row=0, column=len(fields)*2, padx=5, pady=5)
         
         # Create frame for file entries
         self.files_frame = ttk.Frame(self.main_frame, style="Modern.TFrame")
@@ -45,21 +107,22 @@ class MetadataEditor:
         self.headers_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Configure grid columns
-        for i in range(8):  # Increased to 8 for new Genre column
+        for i in range(9):  # Increased to 9 for checkbox column
             self.headers_frame.grid_columnconfigure(i, weight=1)
             
         # Fixed column widths
-        self.headers_frame.grid_columnconfigure(0, minsize=130)  # Actions column
-        self.headers_frame.grid_columnconfigure(1, minsize=75)   # File type column
-        self.headers_frame.grid_columnconfigure(2, minsize=160)  # Parent dir column
-        self.headers_frame.grid_columnconfigure(3, minsize=250)  # Title column
-        self.headers_frame.grid_columnconfigure(4, minsize=250)  # Subtitle column 
-        self.headers_frame.grid_columnconfigure(5, minsize=250)  # Artist column
-        self.headers_frame.grid_columnconfigure(6, minsize=250)  # Genre column
-        self.headers_frame.grid_columnconfigure(7, minsize=50)   # Status column
+        self.headers_frame.grid_columnconfigure(0, minsize=30)   # Checkbox column
+        self.headers_frame.grid_columnconfigure(1, minsize=130)  # Actions column
+        self.headers_frame.grid_columnconfigure(2, minsize=75)   # File type column
+        self.headers_frame.grid_columnconfigure(3, minsize=160)  # Parent dir column
+        self.headers_frame.grid_columnconfigure(4, minsize=250)  # Title column
+        self.headers_frame.grid_columnconfigure(5, minsize=250)  # Subtitle column 
+        self.headers_frame.grid_columnconfigure(6, minsize=250)  # Artist column
+        self.headers_frame.grid_columnconfigure(7, minsize=250)  # Genre column
+        self.headers_frame.grid_columnconfigure(8, minsize=50)   # Status column
         
         # Create headers
-        headers = ["Actions", "Type", "Parent Directory", "Title", "Subtitle", "Artist", "Genre", "Status"]
+        headers = ["", "Actions", "Type", "Parent Directory", "Title", "Subtitle", "Artist", "Genre", "Status"]
         for i, header in enumerate(headers):
             if header in ["Parent Directory", "Title", "Subtitle", "Artist", "Genre"]:
                 btn = ttk.Button(self.headers_frame, text=header, width=15,
@@ -68,7 +131,7 @@ class MetadataEditor:
                 btn.grid(row=0, column=i, padx=5, sticky='n')
             else:
                 lbl = ttk.Label(self.headers_frame, text=header, style="Modern.TLabel")
-                lbl.grid(row=0, column=i, padx=(25,15), sticky='ew')  # Increased left padding for Actions and Type
+                lbl.grid(row=0, column=i, padx=(25,15), sticky='ew')
         
         # Create scrollable frame
         self.canvas = tk.Canvas(self.files_frame, background="#f0f0f0", highlightthickness=0)
@@ -80,7 +143,7 @@ class MetadataEditor:
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
         
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=1500)  # Increased width
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=1550)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         # Enable mouse wheel scrolling
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
@@ -92,6 +155,49 @@ class MetadataEditor:
         self.file_entries = []
         self.sort_reverse = {'parent_directory': False, 'title': False, 'subtitle': False, 'artist': False, 'genre': False}
         
+    def toggle_bulk_edit(self):
+        self.bulk_edit_enabled = not self.bulk_edit_enabled
+        if self.bulk_edit_enabled:
+            self.bulk_edit_button.configure(text="Exit Bulk Edit")
+            self.bulk_edit_controls.pack(after=self.button_frame, fill=tk.X, pady=(0,10))
+            # Show checkboxes
+            for entry in self.file_entries:
+                entry['checkbox'].grid()
+        else:
+            self.bulk_edit_button.configure(text="Bulk Edit")
+            self.bulk_edit_controls.pack_forget()
+            # Hide checkboxes and clear selection
+            for entry in self.file_entries:
+                entry['checkbox'].grid_remove()
+                entry['checkbox_var'].set(False)
+            self.selected_entries.clear()
+            
+    def apply_bulk_edit(self):
+        if not self.selected_entries:
+            return
+            
+        # Get values from bulk edit fields
+        new_values = {
+            'title': self.bulk_fields['title'].get(),
+            'subtitle': self.bulk_fields['subtitle'].get(),
+            'artist': self.bulk_fields['artist'].get(),
+            'genre': self.bulk_fields['genre'].get()
+        }
+        
+        # Apply to each selected entry
+        for entry_data in self.selected_entries:
+            for field, value in new_values.items():
+                if value:  # Only update if value is not empty
+                    entry_data['entries'][field]['var'].set(value)
+                    self.on_entry_change(entry_data['frame'], entry_data['filepaths'], 
+                                       field, entry_data['entries'][field])
+                    
+    def on_checkbox_toggle(self, entry_data):
+        if entry_data['checkbox_var'].get():
+            self.selected_entries.append(entry_data)
+        else:
+            self.selected_entries.remove(entry_data)
+            
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
@@ -191,26 +297,35 @@ class MetadataEditor:
         
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
     def create_file_entry(self, filepaths, parent_dir, title, subtitle, artist, genre, music_file):
         frame = ttk.Frame(self.scrollable_frame, style="Modern.TFrame")
         frame.pack(fill=tk.X, padx=5, pady=2)
         
         # Configure grid
-        for i in range(8):  # Increased to 8 for Genre column
+        for i in range(9):  # Increased to 9 for checkbox
             frame.grid_columnconfigure(i, weight=1)
+            
         # Fixed column widths
-        frame.grid_columnconfigure(0, minsize=130)  # Actions column
-        frame.grid_columnconfigure(1, minsize=75)   # File type column
-        frame.grid_columnconfigure(2, minsize=160)  # Parent dir column
-        frame.grid_columnconfigure(3, minsize=250)  # Title column
-        frame.grid_columnconfigure(4, minsize=250)  # Subtitle column 
-        frame.grid_columnconfigure(5, minsize=250)  # Artist column
-        frame.grid_columnconfigure(6, minsize=250)  # Genre column
-        frame.grid_columnconfigure(7, minsize=50)   # Status column
+        frame.grid_columnconfigure(0, minsize=30)   # Checkbox column
+        frame.grid_columnconfigure(1, minsize=130)  # Actions column
+        frame.grid_columnconfigure(2, minsize=75)   # File type column
+        frame.grid_columnconfigure(3, minsize=160)  # Parent dir column
+        frame.grid_columnconfigure(4, minsize=250)  # Title column
+        frame.grid_columnconfigure(5, minsize=250)  # Subtitle column 
+        frame.grid_columnconfigure(6, minsize=250)  # Artist column
+        frame.grid_columnconfigure(7, minsize=250)  # Genre column
+        frame.grid_columnconfigure(8, minsize=50)   # Status column
+        
+        # Checkbox for bulk edit (initially hidden)
+        checkbox_var = tk.BooleanVar()
+        checkbox = ttk.Checkbutton(frame, variable=checkbox_var)
+        checkbox.grid(row=0, column=0, padx=5)
+        checkbox.grid_remove()  # Hidden by default
         
         # Actions frame
         actions_frame = ttk.Frame(frame, style="Modern.TFrame")
-        actions_frame.grid(row=0, column=0, padx=5)
+        actions_frame.grid(row=0, column=1, padx=5)
         
         # Open button
         open_btn = ttk.Button(actions_frame, text="...", width=2,
@@ -238,17 +353,17 @@ class MetadataEditor:
             if ext not in file_types:
                 file_types.append(ext)
         type_label = ttk.Label(frame, text="+".join(file_types), style="Modern.TLabel")
-        type_label.grid(row=0, column=1, padx=5)
+        type_label.grid(row=0, column=2, padx=5)
         
         # Parent directory (uneditable)
         parent_label = ttk.Label(frame, text=parent_dir, style="Modern.TLabel")
-        parent_label.grid(row=0, column=2, padx=5)
+        parent_label.grid(row=0, column=3, padx=5)
         
         # Create entry fields
         entries = {}
         original_values = {'title': title, 'subtitle': subtitle, 'artist': artist, 'genre': genre}
         
-        col = 3
+        col = 4
         for field, value in original_values.items():
             var = tk.StringVar(value=value)
             entry = ttk.Entry(frame, textvariable=var, style="Modern.TEntry")
@@ -264,7 +379,7 @@ class MetadataEditor:
         commit_btn = ttk.Button(frame, text="Commit?", width=10,
                               command=lambda: self.commit_changes(frame, filepaths, entries),
                               style="Modern.TButton")
-        commit_btn.grid(row=0, column=7, padx=5, sticky='e')
+        commit_btn.grid(row=0, column=8, padx=5, sticky='e')
         commit_btn.grid_remove()
         
         entry_data = {
@@ -272,8 +387,14 @@ class MetadataEditor:
             'filepaths': filepaths,
             'entries': entries,
             'commit_btn': commit_btn,
-            'parent_dir': parent_dir
+            'parent_dir': parent_dir,
+            'checkbox': checkbox,
+            'checkbox_var': checkbox_var
         }
+        
+        # Bind checkbox to selection tracking
+        checkbox_var.trace_add('write', lambda *args: self.on_checkbox_toggle(entry_data))
+        
         self.file_entries.append(entry_data)
 
     def commit_full_metadata(self, filepaths, entries, editor):
@@ -308,10 +429,32 @@ class MetadataEditor:
             entry_data['entry'].configure(style='Modified.TEntry')
             commit_btn.configure(text="Commit?", style='Warning.TButton', state='normal')
             commit_btn.grid()
+            self.update_commit_all_button()
         else:
             entry_data['entry'].configure(style='Modern.TEntry')
             if all(e['var'].get() == e['original'] for e in [entry for entry in frame.entries.values()]):
                 commit_btn.grid_remove()
+            self.update_commit_all_button()
+            
+    def update_commit_all_button(self):
+        # Count uncommitted changes
+        uncommitted = 0
+        for entry in self.file_entries:
+            for field_data in entry['entries'].values():
+                if field_data['var'].get() != field_data['original']:
+                    uncommitted += 1
+                    break
+                    
+        if uncommitted > 0:
+            self.commit_all_button.configure(text=f"Commit All ({uncommitted})")
+            self.commit_all_button.pack(side=tk.RIGHT, padx=5)
+        else:
+            self.commit_all_button.pack_forget()
+            
+    def commit_all_changes(self):
+        for entry in self.file_entries:
+            if any(e['var'].get() != e['original'] for e in entry['entries'].values()):
+                self.commit_changes(entry['frame'], entry['filepaths'], entry['entries'])
             
     def commit_changes(self, frame, filepaths, entries):
         for filepath in filepaths:
@@ -340,6 +483,9 @@ class MetadataEditor:
         # Update commit button
         commit_btn = [w for w in frame.winfo_children() if isinstance(w, ttk.Button) and w['text'] in ["Commit?", "Committed"]][0]
         commit_btn.configure(text="Committed", style='Success.TButton', state='disabled')
+        
+        # Update commit all button
+        self.update_commit_all_button()
         
     def sort_entries(self, field):
         self.sort_reverse[field] = not self.sort_reverse[field]
@@ -416,7 +562,7 @@ class MetadataEditor:
     def read_metadata(self, filepath):
         metadata = {}
         try:
-            with open(filepath, 'r', encoding='utf-8') as file:
+            with open(filepath, 'r', encoding='utf-8-sig') as file:
                 for line in file:
                     if line.startswith(('#TITLE:', '#SUBTITLE:', '#ARTIST:', '#GENRE:', '#MUSIC:')):
                         key, value = line.strip().split(':', 1)
@@ -429,7 +575,7 @@ class MetadataEditor:
 
 def main():
     root = tk.Tk()
-    root.geometry("1550x800")  # Increased width for Genre column
+    root.geometry("1600x800")  # Increased width for checkbox column
     app = MetadataEditor(root)
     root.mainloop()
  
