@@ -561,16 +561,27 @@ class MetadataEditor:
     
     def read_metadata(self, filepath):
         metadata = {}
-        try:
-            with open(filepath, 'r', encoding='utf-8-sig') as file:
-                for line in file:
-                    if line.startswith(('#TITLE:', '#SUBTITLE:', '#ARTIST:', '#GENRE:', '#MUSIC:')):
-                        key, value = line.strip().split(':', 1)
-                        key = key[1:]  # Remove the # character
-                        value = value.rstrip(';')
-                        metadata[key] = value
-        except Exception as e:
-            print(f"Error reading metadata from {filepath}: {str(e)}")
+        # List of encodings to try
+        encodings = ['utf-8-sig', 'utf-8', 'shift-jis', 'latin1', 'cp1252']
+        
+        for encoding in encodings:
+            try:
+                with open(filepath, 'r', encoding=encoding) as file:
+                    for line in file:
+                        if line.startswith(('#TITLE:', '#SUBTITLE:', '#ARTIST:', '#GENRE:', '#MUSIC:')):
+                            key, value = line.strip().split(':', 1)
+                            key = key[1:]  # Remove the # character
+                            value = value.rstrip(';')
+                            metadata[key] = value
+                # If we successfully read the file, break the loop
+                break
+            except UnicodeDecodeError:
+                # Try next encoding
+                continue
+            except Exception as e:
+                print(f"Error reading metadata from {filepath}: {str(e)}")
+                break
+            
         return metadata
 
 def main():
