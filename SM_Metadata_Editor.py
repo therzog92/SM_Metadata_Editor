@@ -8,6 +8,9 @@ import fnmatch
 import asyncio
 from shazamio import Shazam
 import nest_asyncio
+from PIL import Image, ImageTk
+import requests
+from io import BytesIO
 
 # Constants
 SUPPORTED_EXTENSIONS = {'.sm', '.ssc'}
@@ -55,8 +58,9 @@ class MetadataUtil:
         for line in content:
             if line.startswith('#') and ':' in line:
                 key, value = line.strip().split(':', 1)
-                key = key[1:]
-                metadata[key] = value.rstrip(';')
+                key = key[1:]  # Remove the # character
+                value = value.rstrip(';')
+                metadata[key] = value
         return metadata
         
     @staticmethod
@@ -253,6 +257,15 @@ class MetadataEditor:
             padding=5
         )
 
+        # Create Help button
+        help_button = ttk.Button(
+            github_frame, 
+            text="❓ Help",  # Unicode question mark symbol
+            style="Modern.TButton",
+            command=self.show_help_dialog
+        )
+        help_button.pack(side=tk.RIGHT, padx=5)
+
         # Create bulk edit button
         self.bulk_edit_enabled = False
         self.bulk_edit_button = ttk.Button(self.button_frame, text="Bulk Edit",
@@ -436,6 +449,11 @@ class MetadataEditor:
                         artist = track.get('subtitle', '')
                         genre = track.get('genres', {}).get('primary', '')
                         
+                        # Safely get the coverart URL from the correct path
+                        coverart_url = None
+                        if 'share' in track and 'image' in track['share']:
+                            coverart_url = track['share']['image']
+                        
                         for char in special_chars:
                             title = title.replace(char, '\\' + char)
                             artist = artist.replace(char, '\\' + char)
@@ -444,7 +462,8 @@ class MetadataEditor:
                         shazam_data = {
                             'title': title,
                             'artist': artist,
-                            'genre': genre
+                            'genre': genre,
+                            'images': {'coverart': coverart_url} if coverart_url else {}
                         }
                         entry_frame = play_btn.master.master
                         self.show_shazam_results(entry_frame, shazam_data)
@@ -476,23 +495,55 @@ class MetadataEditor:
         except:
             messagebox.showwarning(
                 "No Internet Connection",
-                "Shazam mode requires an internet connection. The feature will be disabled until connection is restored."
+                "Shazam mode requires an internet connection. Please check your connection and try again."
             )
+            self.shazam_mode = False
             self.shazam_button.configure(**SHAZAM_BUTTON_NORMAL)
             return
 
-        if not hasattr(self, 'shazam'):
-            self.shazam = Shazam()
-            nest_asyncio.apply()
-            self.loop = asyncio.get_event_loop()
-        
+        # Toggle mode
         self.shazam_mode = not self.shazam_mode
+        
         if self.shazam_mode:
             self.shazam_button.configure(**SHAZAM_BUTTON_ACTIVE)
         else:
             self.shazam_button.configure(**SHAZAM_BUTTON_NORMAL)
-        
+            self.restore_normal_mode()
+
+    def restore_normal_mode(self):
+        # Restore any modified entries to their normal state
+        for entry_data in self.file_entries:
+            for field_data in entry_data['entries'].values():
+                if 'shazam_btn' in field_data:
+                    field_data['shazam_btn'].destroy()
+                    field_data['entry'].grid()
+                    field_data.pop('shazam_btn')
+
     def show_shazam_results(self, entry_frame, shazam_data):
+        # Find the actions frame
+        actions_frame = next(
+            (child for child in entry_frame.winfo_children() 
+             if isinstance(child, ttk.Frame)),
+            None
+        )
+        if not actions_frame:
+            return
+
+        # Only try to handle artwork if 'images' exists in shazam_data
+        if 'images' in shazam_data and 'coverart' in shazam_data['images']:
+            artwork_url = shazam_data['images']['coverart']
+            if artwork_url:
+                artwork_btn = ttk.Button(
+                    actions_frame,
+                    text="🖼",  # Unicode picture icon
+                    width=2,
+                    command=lambda: self.show_artwork_preview(entry_frame, artwork_url),
+                    style="Modern.TButton"
+                )
+                artwork_btn.pack(side=tk.LEFT, padx=2)
+                ToolTip(artwork_btn, "Preview/Update Album Artwork")
+
+        # Handle metadata fields
         column_positions = {
             'title': 4,
             'artist': 6,
@@ -500,7 +551,7 @@ class MetadataEditor:
         }
         
         for field, value in shazam_data.items():
-            if not value:
+            if not value or field == 'images':  # Skip empty values and images field
                 continue
             
             entry_data = next(
@@ -554,14 +605,6 @@ class MetadataEditor:
             entry_data['entries'][field]
         )
 
-    def restore_normal_mode(self):
-        for entry_data in self.file_entries:
-            for field_data in entry_data['entries'].values():
-                if 'shazam_btn' in field_data:
-                    field_data['shazam_btn'].destroy()
-                    field_data['entry'].grid()
-                    field_data.pop('shazam_btn')
-
     def show_metadata_editor(self, filepaths):
         # Create new window
         editor = tk.Toplevel(self.root)
@@ -583,7 +626,6 @@ class MetadataEditor:
         
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=550)
         canvas.configure(yscrollcommand=scrollbar.set)
-        
         # Bind mousewheel scrolling
         canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
         
@@ -1051,6 +1093,219 @@ class MetadataEditor:
         
         self.root.destroy()
 
+    def show_artwork_preview(self, entry_frame, artwork_url):
+        preview_window = tk.Toplevel(self.root)
+        preview_window.title("Album Artwork Preview")
+        preview_window.geometry("800x400")
+
+        # Find the current jacket file
+        entry_data = next((e for e in self.file_entries if e['frame'] == entry_frame), None)
+        if not entry_data:
+            return
+
+        directory = os.path.dirname(entry_data['filepaths'][0])
+        
+        # Create main frame with two columns
+        main_frame = ttk.Frame(preview_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create frames for current and new artwork
+        current_frame = ttk.LabelFrame(main_frame, text="Current Artwork")
+        current_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        
+        new_frame = ttk.LabelFrame(main_frame, text="New Artwork")
+        new_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        
+        # Load current jacket
+        current_img = None
+        jacket_path = None
+        for file in os.listdir(directory):
+            if file.lower().endswith(('.jpg', '.jpeg', '.png')) and 'jacket' in file.lower():
+                jacket_path = os.path.join(directory, file)
+                try:
+                    current_img = Image.open(jacket_path)
+                    break
+                except Exception:
+                    continue
+        
+        # Load new artwork
+        try:
+            response = requests.get(artwork_url)
+            new_img = Image.open(BytesIO(response.content))
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load new artwork: {str(e)}")
+            preview_window.destroy()
+            return
+        
+        # Display current artwork if found
+        if current_img:
+            # Resize maintaining aspect ratio
+            current_img.thumbnail((350, 350))
+            current_photo = ImageTk.PhotoImage(current_img)
+            current_label = ttk.Label(current_frame, image=current_photo)
+            current_label.image = current_photo
+            current_label.pack(padx=10, pady=10)
+            
+            # Add dimensions label
+            ttk.Label(current_frame, 
+                     text=f"Dimensions: {current_img.size[0]}x{current_img.size[1]}",
+                     style="Modern.TLabel").pack()
+        else:
+            ttk.Label(current_frame, 
+                     text="No current artwork found",
+                     style="Modern.TLabel").pack(padx=10, pady=10)
+        
+        # Display new artwork
+        new_img.thumbnail((350, 350))
+        new_photo = ImageTk.PhotoImage(new_img)
+        new_label = ttk.Label(new_frame, image=new_photo)
+        new_label.image = new_photo
+        new_label.pack(padx=10, pady=10)
+        
+        # Add dimensions label
+        ttk.Label(new_frame, 
+                 text=f"Dimensions: {new_img.size[0]}x{new_img.size[1]}",
+                 style="Modern.TLabel").pack()
+        
+        # Add buttons frame
+        button_frame = ttk.Frame(preview_window)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+        
+        # Keep current button
+        keep_button = ttk.Button(
+            button_frame, 
+            text="Keep Current", 
+            command=preview_window.destroy,
+            style="Modern.TButton"
+        )
+        keep_button.pack(side=tk.LEFT, padx=5)
+        
+        # Update button (only if current artwork exists)
+        if current_img and jacket_path:
+            update_button = ttk.Button(
+                button_frame, 
+                text="Update Artwork",
+                command=lambda: self.update_artwork(
+                    jacket_path, 
+                    new_img, 
+                    current_img.size,
+                    preview_window
+                ),
+                style="Modern.TButton"
+            )
+            update_button.pack(side=tk.RIGHT, padx=5)
+        
+        # Ensure proper window sizing
+        preview_window.update_idletasks()
+        preview_window.geometry("")  # Reset geometry to fit content
+
+    def update_artwork(self, jacket_path, new_img, target_size, preview_window):
+        try:
+            # Resize new image to match current dimensions
+            resized_img = new_img.resize(target_size, Image.Resampling.LANCZOS)
+            resized_img.save(jacket_path)
+            messagebox.showinfo("Success", "Artwork updated successfully!")
+            preview_window.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to update artwork: {str(e)}")
+
+    def show_help_dialog(self):
+        help_window = tk.Toplevel(self.root)
+        help_window.title("StepMania Metadata Editor Help")
+        help_window.geometry("800x600")
+        
+        # Create main frame with scrollbar
+        main_frame = ttk.Frame(help_window, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=750)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Help content sections
+        sections = {
+            "Basic Features": [
+                "• Add Directory: Select folders containing StepMania song files (.sm, .ssc)",
+                "• Clear All: Remove all loaded songs from the editor",
+                "• Bulk Edit: Select multiple songs to edit their metadata simultaneously",
+                "• Sort columns by clicking on column headers"
+            ],
+            "Actions Column": [
+                "• ... (three dots): Open song folder in file explorer",
+                "• ▶ (play): Preview song audio (if available)",
+                "• ✎ (pencil): Open full metadata editor for advanced fields"
+            ],
+            "Metadata Editing": [
+                "• Edit Title, Subtitle, Artist, and Genre directly in the main view",
+                "• Successfully saved changes appear in light green commited button",
+                "• Click 'Commit?' to save changes (appears when modifications are made)",
+                "• Use 'Commit All' to save all pending changes at once"
+            ],
+            "Shazam Integration": [
+                "• Toggle Shazam Mode to identify songs automatically",
+                "• Play a song while Shazam is active to get metadata suggestions",
+                "• Click on suggested values to apply them",
+                "• Preview and update album artwork when available"
+            ],
+            "Bulk Editing": [
+                "• Enable Bulk Edit mode to show checkboxes",
+                "• Select multiple songs using checkboxes",
+                "• Enter new values in the bulk edit fields",
+                "• Click 'Apply to Selected' to update all chosen songs"
+            ],
+            "Tips": [
+                "• The editor supports multiple file encodings (UTF-8, Shift-JIS, etc.)",
+                "• Combined view for songs with both .sm and .ssc files",
+                "• Mouse wheel scrolling supported in all views",
+                "• Internet connection required for Shazam features"
+            ]
+        }
+        
+        row = 0
+        for section, items in sections.items():
+            # Section header
+            header = ttk.Label(
+                scrollable_frame,
+                text=section,
+                style="Modern.TLabel",
+                font=("Helvetica", 12, "bold")
+            )
+            header.grid(row=row, column=0, sticky="w", pady=(15,5))
+            row += 1
+            
+            # Section content
+            content = ttk.Label(
+                scrollable_frame,
+                text="\n".join(items),
+                style="Modern.TLabel",
+                justify=tk.LEFT,
+                wraplength=700
+            )
+            content.grid(row=row, column=0, sticky="w", padx=20)
+            row += 1
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Enable mouse wheel scrolling
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        
+        # Close button
+        close_btn = ttk.Button(
+            help_window,
+            text="Close",
+            command=help_window.destroy,
+            style="Modern.TButton"
+        )
+        close_btn.pack(pady=10)
+
 class FileEntry:
     def __init__(self, parent_frame, filepaths, metadata, callbacks):
         self.frame = ttk.Frame(parent_frame, style="Modern.TFrame")
@@ -1098,9 +1353,10 @@ class FileEntry:
 def main():
     root = tk.Tk()
     root.geometry("1600x800")  # Increased width for checkbox column
+    root.resizable(False, False)  # Prevent window resizing
     app = MetadataEditor(root)
     root.mainloop()
- 
+
 
 if __name__ == "__main__":
     main()
