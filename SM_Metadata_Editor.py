@@ -405,6 +405,19 @@ class MetadataEditor:
         self.button_frame = ttk.Frame(self.main_frame, style="Modern.TFrame")
         self.button_frame.pack(fill=tk.X, pady=(0,10))
         
+        # Create search frame (initially hidden)
+        self.search_frame = ttk.Frame(self.main_frame, style="Modern.TFrame")
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add('write', self.apply_search_filter)
+        self.search_entry = ttk.Entry(
+            self.search_frame,
+            textvariable=self.search_var,
+            style="Modern.TEntry",
+            width=40
+        )
+        ttk.Label(self.search_frame, text="Search:", style="Modern.TLabel").pack(side=tk.LEFT, padx=(0, 5))
+        self.search_entry.pack(side=tk.LEFT, padx=5)
+        
         # Create directory picker button frame
         self.dir_button_frame = ttk.Frame(self.button_frame, style="Modern.TFrame")
         self.dir_button_frame.pack(side=tk.LEFT)
@@ -1336,6 +1349,9 @@ class MetadataEditor:
             self.clear_button.pack(side=tk.LEFT, padx=5)
             self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
             self.search_credits_button.pack(side=tk.LEFT, padx=5)
+            self.search_frame.pack(after=self.button_frame, fill=tk.X, pady=(0,10))
+        else:
+            self.search_frame.pack_forget()
     
     def read_metadata(self, filepath):
         metadata = {}
@@ -1741,6 +1757,10 @@ class MetadataEditor:
         
         # Remove credit filter
         self.apply_credit_filter(set())
+        
+        # Hide search frame and clear search
+        self.search_frame.pack_forget()
+        self.search_var.set("")
 
     def collect_credits(self):
         """Collect all unique credits from loaded files"""
@@ -1819,6 +1839,47 @@ class MetadataEditor:
                 font=("Helvetica", 10)
             )
             self.filter_label.pack(side=tk.LEFT, padx=10)
+
+    def apply_search_filter(self, *args):
+        search_text = self.search_var.get().lower()
+        shown_count = 0
+        total_count = len(self.file_entries)
+        
+        for entry in self.file_entries:
+            show_entry = False if search_text else True
+            
+            if search_text:
+                # Check all relevant fields for the search text
+                fields_to_check = ['title', 'subtitle', 'artist', 'genre']
+                for field in fields_to_check:
+                    if field in entry['entries']:
+                        field_value = entry['entries'][field]['var'].get().lower()
+                        if search_text in field_value:
+                            show_entry = True
+                            break
+            
+            if show_entry:
+                entry['frame'].pack()
+                shown_count += 1
+            else:
+                entry['frame'].pack_forget()
+        
+        # Update filter indicator
+        if search_text:
+            filter_text = f"Showing {shown_count} of {total_count} songs"
+            if hasattr(self, 'filter_label'):
+                self.filter_label.configure(text=filter_text)
+            else:
+                self.filter_label = ttk.Label(
+                    self.button_frame,
+                    text=filter_text,
+                    style="Modern.TLabel",
+                    font=("Helvetica", 10)
+                )
+                self.filter_label.pack(side=tk.LEFT, padx=10)
+        elif hasattr(self, 'filter_label'):
+            self.filter_label.destroy()
+            delattr(self, 'filter_label')
 
 class FileEntry:
     def __init__(self, parent_frame, filepaths, metadata, callbacks):
