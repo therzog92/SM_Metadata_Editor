@@ -6,10 +6,11 @@ A user-friendly tool for managing and editing metadata in Stepmania song files (
 - 🎵 Browse and edit multiple Stepmania song files from a single screen
 - 🎧 Preview song audio directly in the application
 - 📝 Batch edit metadata across multiple files
-- 🔍 Sort songs by title, subtitle, artist, or parent directory
+- 🔍 Sort songs by title, subtitle, artist, or pack
 - 📁 Quick access to file locations
 - 🎵 ShazamIO integration for automatic song identification (and jacket artwork matching!) Goodbye, random genre values!
-- 💫 Simple, intuitive interface
+- 🔍 Filter by #CREDIT to find songs with your favorite creator easily
+- 💫 Simple, intuitive interface. Select your song directory and pick which packs you want to view!
 
 ## Quick Start
 1. Run the application
