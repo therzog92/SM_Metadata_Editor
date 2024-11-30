@@ -8,7 +8,7 @@ A user-friendly tool for managing and editing metadata in Stepmania song files (
 - 📝 Batch edit metadata across multiple files
 - 🔍 Sort songs by title, subtitle, artist, or parent directory
 - 📁 Quick access to file locations
-- 🎵 ShazamIO integration for automatic song identification
+- 🎵 ShazamIO integration for automatic song identification (and jacket artwork matching!) Goodbye, random genre values!
 - 💫 Simple, intuitive interface
 
 ## Quick Start
