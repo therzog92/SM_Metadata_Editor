@@ -11,6 +11,7 @@ import nest_asyncio
 from PIL import Image, ImageTk
 import requests
 from io import BytesIO
+import webbrowser
 
 # Constants
 SUPPORTED_EXTENSIONS = {'.sm', '.ssc'}
@@ -55,12 +56,20 @@ class MetadataUtil:
             return {}
             
         metadata = {}
+        credits = set()  # Create a set for credits
+        
         for line in content:
             if line.startswith('#') and ':' in line:
                 key, value = line.strip().split(':', 1)
                 key = key[1:]  # Remove the # character
                 value = value.rstrip(';')
-                metadata[key] = value
+                
+                if key == 'CREDIT':  # Special handling for CREDIT field
+                    credits.add(value)
+                else:
+                    metadata[key] = value
+        
+        metadata['CREDITS'] = credits  # Store all credits in metadata
         return metadata
         
     @staticmethod
@@ -136,6 +145,142 @@ class ToolTip:
             self.tooltip.destroy()
             self.tooltip = None
 
+class PackSelector:
+    def __init__(self, root, directories, on_complete):
+        self.window = tk.Toplevel(root)
+        self.window.title("Select Packs")
+        self.directories = directories
+        self.selected_packs = set()
+        self.on_complete = on_complete
+        
+        # Create custom styles
+        style = ttk.Style()
+        style.configure("Pack.TButton", 
+                       padding=5,
+                       width=30,
+                       foreground="black",
+                       font=("Helvetica", 10))
+        style.configure("PackSelected.TButton",
+                       padding=5,
+                       width=30,
+                       foreground="green",
+                       font=("Helvetica", 10, "bold"))
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        # Main frame
+        main_frame = ttk.Frame(self.window, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Warning label
+        warning_text = ("Warning: Selecting many packs may cause performance issues.\n"
+                       "Consider working with fewer packs at a time for better responsiveness.")
+        warning_label = ttk.Label(
+            main_frame,
+            text=warning_text,
+            style="Warning.TLabel",
+            wraplength=780,
+            justify=tk.CENTER
+        )
+        warning_label.pack(pady=(0, 10))
+        
+        # Create scrollable frame for pack buttons
+        canvas = tk.Canvas(main_frame, background="#f0f0f0", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        self.scrollable_frame = ttk.Frame(canvas)
+        
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        # Bind mousewheel only when mouse is over the canvas
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        
+        # Configure grid for buttons (4 columns instead of 5)
+        for i in range(4):  # Changed from 5 to 4
+            self.scrollable_frame.grid_columnconfigure(i, weight=1, minsize=200)
+            
+        # Calculate window size based on number of packs
+        num_packs = len(self.directories)
+        window_width = min(1200, max(800, (250 * 4) + 50))  # Adjusted for 4 columns
+        window_height = min(800, max(600, (50 * ((num_packs // 4) + 1)) + 150))  # Adjusted division
+        self.window.geometry(f"{window_width}x{window_height}")
+        
+        # Create pack buttons
+        row = 0
+        col = 0
+        for pack in sorted(self.directories, key=str.lower):  # Changed to case-insensitive sort
+            btn = ttk.Button(
+                self.scrollable_frame,
+                text=pack,
+                command=lambda p=pack: self.toggle_pack(p),
+                style="Pack.TButton"
+            )
+            btn.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            
+            # Add tooltip
+            ToolTip(btn, pack)
+            
+            col += 1
+            if col >= 4:  # Changed from 5 to 4
+                col = 0
+                row += 1
+        
+        # Configure scrollable frame width
+        self.scrollable_frame.configure(width=window_width - 50)  # Account for scrollbar
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Create bottom button frame
+        button_frame = ttk.Frame(self.window)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Add buttons
+        ttk.Button(
+            button_frame,
+            text="Let's Go!",
+            command=self.complete_selection,
+            style="Modern.TButton"
+        ).pack(side=tk.RIGHT, padx=5)
+        
+        ttk.Button(
+            button_frame,
+            text="Cancel",
+            command=self.window.destroy,
+            style="Modern.TButton"
+        ).pack(side=tk.RIGHT, padx=5)
+        
+    def toggle_pack(self, pack):
+        if pack in self.selected_packs:
+            self.selected_packs.remove(pack)
+            style = "Pack.TButton"
+        else:
+            self.selected_packs.add(pack)
+            style = "PackSelected.TButton"
+            
+        # Update button style
+        for widget in self.scrollable_frame.winfo_children():
+            if isinstance(widget, ttk.Button) and widget['text'] == pack:
+                widget.configure(style=style)
+                break
+                
+    def complete_selection(self):
+        if self.selected_packs:
+            self.on_complete(self.selected_packs)
+            self.window.destroy()
+
 class MetadataEditor:
     def __init__(self, root):
         self.root = root
@@ -152,16 +297,25 @@ class MetadataEditor:
         
         # Initialize sort tracking
         self.sort_reverse = {
-            'parent_directory': False,
+            'pack': False,  # Changed from 'parent_directory'
             'title': False,
             'subtitle': False,
             'artist': False,
             'genre': False
         }
         
-        # Initialize pygame mixer
+        # Initialize pygame mixer with error handling
         os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
-        pygame.mixer.init()
+        try:
+            pygame.mixer.init()
+            self.audio_enabled = True
+        except Exception as e:
+            print(f"Warning: Audio playback disabled - {str(e)}")
+            self.audio_enabled = False
+            messagebox.showwarning(
+                "Audio Initialization Failed",
+                "Audio playback will be disabled. Other features will work normally."
+            )
         
         # Configure styles
         self.configure_styles()
@@ -209,7 +363,40 @@ class MetadataEditor:
                        padding=5,
                        relief="flat")
         
+        # Add new styles for pack selector
+        style.configure("Pack.TButton", 
+                       padding=5,
+                       background="#f0f0f0")
+        style.configure("PackSelected.TButton",
+                       padding=5,
+                       background="lightgreen")
+        style.configure("Warning.TLabel",
+                       foreground="red",
+                       font=("Helvetica", 10, "bold"))
+    
     def setup_ui(self):
+        # Create GitHub and help button frame at the bottom right
+        github_frame = ttk.Frame(self.root, style="Modern.TFrame")
+        github_frame.pack(side=tk.BOTTOM, anchor=tk.E, padx=10, pady=5)
+
+        # Create Help button first (so it appears to the left of GitHub)
+        help_button = ttk.Button(
+            github_frame, 
+            text="❓ Help",
+            style="Modern.TButton",
+            command=self.show_help_dialog
+        )
+        help_button.pack(side=tk.LEFT, padx=5)
+
+        # Create GitHub button
+        github_button = ttk.Button(
+            github_frame, 
+            text="\u25D3 GitHub",  # Unicode octocat-like symbol
+            style="Modern.TButton",
+            command=lambda: webbrowser.open("https://github.com/therzog92/SM_Metadata_Editor")
+        )
+        github_button.pack(side=tk.LEFT)
+
         # Create main frame
         self.main_frame = ttk.Frame(self.root, padding="10", style="Modern.TFrame")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
@@ -222,55 +409,32 @@ class MetadataEditor:
         self.dir_button_frame = ttk.Frame(self.button_frame, style="Modern.TFrame")
         self.dir_button_frame.pack(side=tk.LEFT)
         
-        # Create directory picker buttons
+        # Create directory picker buttons (initially visible)
         self.dir_button = ttk.Button(self.dir_button_frame, text="Add Directory", 
                                    command=self.pick_directory, style="Modern.TButton")
         self.dir_button.pack(side=tk.LEFT, padx=5)
         
-        # Clear directories button
+        # Clear directories button (initially hidden)
         self.clear_button = ttk.Button(self.dir_button_frame, text="Clear All", 
                                     command=self.clear_directories, style="Modern.TButton")
         self.clear_button.pack(side=tk.LEFT, padx=5)
+        self.clear_button.pack_forget()  # Initially hidden
         
-        # Store selected directories
-        self.selected_directories = set()
-        
-        # Create GitHub link button
-        github_frame = ttk.Frame(self.root, style="Modern.TFrame")  # Changed root to self.root
-        github_frame.pack(side=tk.TOP, anchor=tk.E, padx=10, pady=5)
-
-        # Create GitHub logo using Unicode character (alternative to image)
-        github_button = ttk.Button(
-            github_frame, 
-            text="\u25D3 GitHub",  # Unicode octocat-like symbol
-            style="Modern.TButton",
-            command=lambda: os.startfile("https://github.com/therzog92/SM_Metadata_Editor") if os.name == 'nt' 
-                    else subprocess.run(['open', "https://github.com/therzog92/SM_Metadata_Editor"])
-        )
-        github_button.pack(side=tk.RIGHT)
-
-        # Configure GitHub button style
-        style = ttk.Style()
-        style.configure(
-            "Modern.TButton",
-            font=("Helvetica", 10),
-            padding=5
-        )
-
-        # Create Help button
-        help_button = ttk.Button(
-            github_frame, 
-            text="❓ Help",  # Unicode question mark symbol
-            style="Modern.TButton",
-            command=self.show_help_dialog
-        )
-        help_button.pack(side=tk.RIGHT, padx=5)
-
-        # Create bulk edit button
-        self.bulk_edit_enabled = False
+        # Create bulk edit button (initially hidden)
         self.bulk_edit_button = ttk.Button(self.button_frame, text="Bulk Edit",
                                          command=self.toggle_bulk_edit, style="Modern.TButton")
         self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
+        self.bulk_edit_button.pack_forget()  # Initially hidden
+        
+        # Create credit search button (initially hidden)
+        self.search_credits_button = ttk.Button(
+            self.button_frame,
+            text="Search Credits",
+            command=self.show_credit_search,  # Connect to the new method
+            style="Modern.TButton"
+        )
+        self.search_credits_button.pack(side=tk.LEFT, padx=5)
+        self.search_credits_button.pack_forget()  # Initially hidden
         
         # Create commit all button (initially hidden)
         self.commit_all_button = ttk.Button(self.button_frame, text="Commit All (0)",
@@ -308,31 +472,53 @@ class MetadataEditor:
         self.headers_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Configure grid columns
-        for i in range(9):  # Increased to 9 for checkbox column
-            self.headers_frame.grid_columnconfigure(i, weight=1)
-            
-        # Fixed column widths
-        self.headers_frame.grid_columnconfigure(0, minsize=30)   # Checkbox column
-        self.headers_frame.grid_columnconfigure(1, minsize=130)  # Actions column
-        self.headers_frame.grid_columnconfigure(2, minsize=75)   # File type column
-        self.headers_frame.grid_columnconfigure(3, minsize=160)  # Parent dir column
-        self.headers_frame.grid_columnconfigure(4, minsize=250)  # Title column
-        self.headers_frame.grid_columnconfigure(5, minsize=250)  # Subtitle column 
-        self.headers_frame.grid_columnconfigure(6, minsize=250)  # Artist column
-        self.headers_frame.grid_columnconfigure(7, minsize=250)  # Genre column
-        self.headers_frame.grid_columnconfigure(8, minsize=50)   # Status column
+        for i, width in enumerate([
+            COLUMN_WIDTHS['checkbox'],
+            COLUMN_WIDTHS['actions'],
+            COLUMN_WIDTHS['type'],
+            COLUMN_WIDTHS['parent_dir'],
+            COLUMN_WIDTHS['title'],
+            COLUMN_WIDTHS['subtitle'],
+            COLUMN_WIDTHS['artist'],
+            COLUMN_WIDTHS['genre'],
+            COLUMN_WIDTHS['status']
+        ]):
+            self.headers_frame.grid_columnconfigure(i, minsize=width)
         
         # Create headers
-        headers = ["", "Actions", "Type", "Parent Directory", "Title", "Subtitle", "Artist", "Genre", "Status"]
+        headers = ["", "Actions", "Type", "Pack", "Title", "Subtitle", "Artist", "Genre", " "]
         for i, header in enumerate(headers):
-            if header in ["Parent Directory", "Title", "Subtitle", "Artist", "Genre"]:
-                btn = ttk.Button(self.headers_frame, text=header, width=15,
-                               command=lambda h=header.lower().replace(" ", "_"): self.sort_entries(h),
-                               style="Header.TButton")
-                btn.grid(row=0, column=i, padx=5, sticky='n')
+            if header in ["Pack", "Title", "Subtitle", "Artist", "Genre"]:
+                column_key = header.lower().replace(" ", "_")
+                if column_key == "pack":  # Changed from parent_directory check
+                    column_key = "parent_dir"  # Keep this as is for column width reference
+                    
+                btn = ttk.Button(
+                    self.headers_frame, 
+                    text=header,
+                    command=lambda h=header.lower(): self.sort_entries(h),  # Simplified since 'pack' doesn't need replacement
+                    style="Header.TButton",
+                    width=COLUMN_WIDTHS[column_key] // 8
+                )
+                btn.grid(row=0, column=i, padx=5, sticky='')
             else:
-                lbl = ttk.Label(self.headers_frame, text=header, style="Modern.TLabel")
-                lbl.grid(row=0, column=i, padx=(25,15), sticky='ew')
+                column_key = {
+                    "": "checkbox" if i == 0 else "status",
+                    "Actions": "actions",
+                    "Type": "type",
+                    " ": "status"
+                }.get(header, "status")
+                
+                width = COLUMN_WIDTHS[column_key] // 8 - 1
+                
+                lbl = ttk.Label(
+                    self.headers_frame, 
+                    text=header, 
+                    style="Modern.TLabel",
+                    anchor="center",
+                    width=width
+                )
+                lbl.grid(row=0, column=i, padx=5, sticky='nsew')
         
         # Create scrollable frame
         self.canvas = tk.Canvas(self.files_frame, background="#f0f0f0", highlightthickness=0)
@@ -347,7 +533,13 @@ class MetadataEditor:
         self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=1550)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         # Enable mouse wheel scrolling
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        def _on_mousewheel(event):
+            if self.canvas.winfo_exists():
+                self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        # Bind mousewheel only when mouse is over the canvas
+        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
         
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -369,10 +561,6 @@ class MetadataEditor:
                 entry['checkbox_var'].set(False)
             self.selected_entries.clear()
             
-            # Make sure bulk edit button stays visible
-            if hasattr(self, 'bulk_edit_button'):
-                self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
-        
     def apply_bulk_edit(self):
         if not self.selected_entries:
             return
@@ -403,89 +591,101 @@ class MetadataEditor:
         # Update commit all button text
         self.update_commit_all_button()
         
-        # Show/hide bulk edit controls based on selection state
-        if self.selected_entries and not self.bulk_edit_enabled:
-            self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
-        elif not self.selected_entries and not self.bulk_edit_enabled:
-            self.bulk_edit_button.pack_forget()
-        
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
     def play_audio(self, music_path, play_btn):
-        directory = os.path.dirname(music_path)
-        music_name = os.path.basename(music_path)
-        base_name = os.path.splitext(music_name)[0]
-        extension = os.path.splitext(music_name)[1].lower()
+        if not self.audio_enabled:
+            messagebox.showwarning(
+                "Audio Disabled",
+                "Audio playback is currently disabled due to initialization error."
+            )
+            return
         
         # Stop current playing audio if any
         if self.current_playing:
             pygame.mixer.music.stop()
-            self.current_playing.configure(text="▶")
+            try:
+                self.current_playing.configure(text="▶")
+            except (tk.TclError, RuntimeError):
+                # Button no longer exists, just clear the reference
+                pass
             if self.current_playing == play_btn:
                 self.current_playing = None
                 return
+            
+        # Show appropriate log message based on mode
+        if self.shazam_mode:
+            print(f"\nAttempting to play and analyze: {music_path}")
+        else:
+            print(f"\nAttempting to play: {music_path}")
         
-        # Normalize path to handle backslashes
-        music_path = os.path.normpath(music_path)
+        # Clean and normalize the path
+        music_path = os.path.normpath(music_path.strip())
+        directory = os.path.dirname(music_path)
+        music_name = os.path.basename(music_path)
         
-        # First, try exact match
+        def process_shazam_result(file_path, play_button):
+            if self.shazam_mode:
+                print("Starting Shazam analysis...")
+                result = self.loop.run_until_complete(self.analyze_single_file(file_path))
+                if result and 'track' in result:
+                    track = result['track']
+                    # Clean up special characters
+                    special_chars = ['#', ':', ';']
+                    title = track.get('title', '')
+                    artist = track.get('subtitle', '')
+                    genre = track.get('genres', {}).get('primary', '')
+                    
+                    # Safely get the coverart URL from the correct path
+                    coverart_url = None
+                    if 'share' in track and 'image' in track['share']:
+                        coverart_url = track['share']['image']
+                    
+                    for char in special_chars:
+                        title = title.replace(char, '\\' + char)
+                        artist = artist.replace(char, '\\' + char)
+                        genre = genre.replace(char, '\\' + char)
+                        
+                    shazam_data = {
+                        'title': title,
+                        'artist': artist,
+                        'genre': genre,
+                        'images': {'coverart': coverart_url} if coverart_url else {}
+                    }
+                    entry_frame = play_button.master.master
+                    self.show_shazam_results(entry_frame, shazam_data)
+        
+        # First try exact path
         if os.path.exists(music_path):
             try:
                 pygame.mixer.music.load(music_path)
                 pygame.mixer.music.play()
                 play_btn.configure(text="⏹")
                 self.current_playing = play_btn
-                
-                # Add Shazam analysis if mode is active
-                if self.shazam_mode:
-                    result = self.loop.run_until_complete(self.analyze_single_file(music_path))
-                    if result and 'track' in result:
-                        track = result['track']
-                        # Clean up special characters
-                        special_chars = ['\\', '#', ':', ';', '*', '?', '"', '<', '>', '|',
-                                       '%', '&', "'", '`', '~', '$', '!', '@']
-                        title = track.get('title', '')
-                        artist = track.get('subtitle', '')
-                        genre = track.get('genres', {}).get('primary', '')
-                        
-                        # Safely get the coverart URL from the correct path
-                        coverart_url = None
-                        if 'share' in track and 'image' in track['share']:
-                            coverart_url = track['share']['image']
-                        
-                        for char in special_chars:
-                            title = title.replace(char, '\\' + char)
-                            artist = artist.replace(char, '\\' + char)
-                            genre = genre.replace(char, '\\' + char)
-                            
-                        shazam_data = {
-                            'title': title,
-                            'artist': artist,
-                            'genre': genre,
-                            'images': {'coverart': coverart_url} if coverart_url else {}
-                        }
-                        entry_frame = play_btn.master.master
-                        self.show_shazam_results(entry_frame, shazam_data)
+                process_shazam_result(music_path, play_btn)
                 return
             except Exception as e:
-                print(f"Error playing audio {music_path}: {str(e)}")
+                print(f"Exact path failed: {str(e)}")
         
-        # If exact match fails, try to find any file that ends with the base filename
-        base_search = base_name.split()[-1].lower()  # Get last word before extension
-        for file in os.listdir(directory):
-            file_lower = file.lower()
-            if (file_lower.endswith(f"{base_search}{extension}") and 
-                file_lower.endswith(('.ogg', '.mp3', '.wav'))):
-                try:
+        # If exact path fails, try to find the file
+        print(f"Searching directory for matching file...")
+        try:
+            for file in os.listdir(directory):
+                if file.lower().endswith(('.ogg', '.mp3', '.wav')):
                     full_path = os.path.join(directory, file)
-                    pygame.mixer.music.load(full_path)
-                    pygame.mixer.music.play()
-                    play_btn.configure(text="⏹")
-                    self.current_playing = play_btn
-                    return
-                except Exception as e:
-                    print(f"Error playing audio {full_path}: {str(e)}")
+                    print(f"Trying: {full_path}")
+                    try:
+                        pygame.mixer.music.load(full_path)
+                        pygame.mixer.music.play()
+                        play_btn.configure(text="⏹")
+                        self.current_playing = play_btn
+                        process_shazam_result(full_path, play_btn)
+                        return
+                    except Exception as e:
+                        print(f"Failed to load alternative file: {str(e)}")
+        except Exception as e:
+            print(f"Error searching directory: {str(e)}")
 
     def toggle_shazam_mode(self):
         # Check internet connection first
@@ -520,7 +720,7 @@ class MetadataEditor:
                     field_data.pop('shazam_btn')
 
     def show_shazam_results(self, entry_frame, shazam_data):
-        # Find the actions frame
+        # Check if artwork button already exists in the actions frame
         actions_frame = next(
             (child for child in entry_frame.winfo_children() 
              if isinstance(child, ttk.Frame)),
@@ -528,20 +728,6 @@ class MetadataEditor:
         )
         if not actions_frame:
             return
-
-        # Only try to handle artwork if 'images' exists in shazam_data
-        if 'images' in shazam_data and 'coverart' in shazam_data['images']:
-            artwork_url = shazam_data['images']['coverart']
-            if artwork_url:
-                artwork_btn = ttk.Button(
-                    actions_frame,
-                    text="🖼",  # Unicode picture icon
-                    width=2,
-                    command=lambda: self.show_artwork_preview(entry_frame, artwork_url),
-                    style="Modern.TButton"
-                )
-                artwork_btn.pack(side=tk.LEFT, padx=2)
-                ToolTip(artwork_btn, "Preview/Update Album Artwork")
 
         # Handle metadata fields
         column_positions = {
@@ -592,18 +778,41 @@ class MetadataEditor:
             btn.grid(row=0, column=col, padx=5, sticky='ew')
             entry_data['entries'][field]['shazam_btn'] = btn
 
+        # Handle artwork button - only create if we have coverart and no existing button
+        if 'images' in shazam_data and 'coverart' in shazam_data['images']:
+            coverart_url = shazam_data['images']['coverart']
+            if coverart_url:
+                # Check for existing artwork button
+                existing_artwork_btn = next(
+                    (child for child in actions_frame.winfo_children() 
+                     if isinstance(child, ttk.Button) and child['text'] == "🖼"),
+                    None
+                )
+                
+                if not existing_artwork_btn:
+                    artwork_btn = ttk.Button(
+                        actions_frame,
+                        text="🖼",
+                        width=2,
+                        command=lambda: self.show_artwork_preview(entry_frame, coverart_url),
+                        style="Modern.TButton"
+                    )
+                    artwork_btn.pack(side=tk.LEFT, padx=2)
+                    ToolTip(artwork_btn, "Preview/Update Album Artwork")
+
     def apply_shazam_value(self, field, value, entry_data):
+        """Apply Shazam result to an entry field"""
+        # Update the entry value
         entry_data['entries'][field]['var'].set(value)
-        entry_data['entries'][field]['shazam_btn'].destroy()
-        entry_data['entries'][field]['entry'].grid()
         
-        # Trigger normal change detection
-        self.on_entry_change(
-            entry_data['frame'],
-            entry_data['filepaths'],
-            field,
-            entry_data['entries'][field]
-        )
+        # Remove the Shazam button and show the entry
+        if 'shazam_btn' in entry_data['entries'][field]:
+            entry_data['entries'][field]['shazam_btn'].destroy()
+            entry_data['entries'][field]['entry'].grid()
+            entry_data['entries'][field].pop('shazam_btn')
+        
+        # Trigger the entry change handler
+        self.on_entry_change(entry_data['frame'], entry_data['filepaths'])
 
     def show_metadata_editor(self, filepaths):
         # Create new window
@@ -678,20 +887,42 @@ class MetadataEditor:
         frame = ttk.Frame(self.scrollable_frame, style="Modern.TFrame")
         frame.pack(fill=tk.X, padx=5, pady=2)
         
-        # Configure grid
-        for i in range(9):  # Increased to 9 for checkbox
-            frame.grid_columnconfigure(i, weight=1)
-            
-        # Fixed column widths
-        frame.grid_columnconfigure(0, minsize=30)   # Checkbox column
-        frame.grid_columnconfigure(1, minsize=130)  # Actions column
-        frame.grid_columnconfigure(2, minsize=75)   # File type column
-        frame.grid_columnconfigure(3, minsize=160)  # Parent dir column
-        frame.grid_columnconfigure(4, minsize=250)  # Title column
-        frame.grid_columnconfigure(5, minsize=250)  # Subtitle column 
-        frame.grid_columnconfigure(6, minsize=250)  # Artist column
-        frame.grid_columnconfigure(7, minsize=250)  # Genre column
-        frame.grid_columnconfigure(8, minsize=50)   # Status column
+        # Configure grid columns with same widths as headers
+        for i, width in enumerate([
+            COLUMN_WIDTHS['checkbox'],
+            COLUMN_WIDTHS['actions'],
+            COLUMN_WIDTHS['type'],
+            COLUMN_WIDTHS['parent_dir'],
+            COLUMN_WIDTHS['title'],
+            COLUMN_WIDTHS['subtitle'],
+            COLUMN_WIDTHS['artist'],
+            COLUMN_WIDTHS['genre'],
+            COLUMN_WIDTHS['status']
+        ]):
+            frame.grid_columnconfigure(i, minsize=width)
+        
+        # Create entries with center alignment
+        entries = {}
+        original_values = {'title': title, 'subtitle': subtitle, 'artist': artist, 'genre': genre}
+        col = 4
+        
+        for field in ['title', 'subtitle', 'artist', 'genre']:
+            var = tk.StringVar(value=original_values[field])
+            entry = ttk.Entry(
+                frame, 
+                textvariable=var, 
+                style="Modern.TEntry",
+                width=COLUMN_WIDTHS[field] // 8
+            )
+            entry.grid(row=0, column=col, padx=5, sticky='ew')
+            entries[field] = {
+                'var': var,
+                'entry': entry,
+                'original': original_values[field]
+            }
+            # Update the lambda to only pass frame and entries
+            var.trace_add('write', lambda *args, f=field: self.on_entry_change(frame, entries))
+            col += 1
         
         # Checkbox for bulk edit (initially hidden)
         checkbox_var = tk.BooleanVar()
@@ -754,33 +985,35 @@ class MetadataEditor:
         )
         type_label.grid(row=0, column=2, padx=5)
         
-        # Parent directory (uneditable)
-        parent_label = ttk.Label(frame, text=parent_dir, style="Modern.TLabel")
+        # Parent directory (uneditable) with fixed width
+        parent_width = COLUMN_WIDTHS['parent_dir'] // 8  # Convert pixels to approximate character width
+        if len(parent_dir) > parent_width:
+            display_text = parent_dir[:parent_width-3] + "..."
+        else:
+            display_text = parent_dir
+
+        parent_label = ttk.Label(
+            frame, 
+            text=display_text, 
+            style="Modern.TLabel",
+            width=parent_width
+        )
         parent_label.grid(row=0, column=3, padx=5)
+
+        # Add tooltip for full text if truncated
+        if len(parent_dir) > parent_width:
+            ToolTip(parent_label, parent_dir)
         
-        # Create entry fields
-        entries = {}
-        original_values = {'title': title, 'subtitle': subtitle, 'artist': artist, 'genre': genre}
-        
-        col = 4
-        for field, value in original_values.items():
-            var = tk.StringVar(value=value)
-            entry = ttk.Entry(frame, textvariable=var, style="Modern.TEntry")
-            entry.grid(row=0, column=col, padx=5, sticky='ew')
-            entries[field] = {'var': var, 'entry': entry, 'original': value}
-            
-            # Bind to changes
-            var.trace_add('write', lambda *args, f=field, 
-                         e=entries[field]: self.on_entry_change(frame, filepaths, f, e))
-            col += 1
-        
-        # Commit button (initially hidden)
-        commit_btn = ttk.Button(frame, text="Commit?", width=10,
-                              command=lambda: self.commit_changes(frame, filepaths, entries),
-                              style="Modern.TButton")
+        # Create commit button (initially hidden)
+        commit_btn = ttk.Button(
+            frame,
+            text="Commit?",
+            command=lambda: self.commit_changes(frame, filepaths, entries),
+            style="Warning.TButton"
+        )
         commit_btn.grid(row=0, column=8, padx=5, sticky='e')
         commit_btn.grid_remove()
-        
+
         entry_data = {
             'frame': frame,
             'filepaths': filepaths,
@@ -820,21 +1053,32 @@ class MetadataEditor:
         # Close editor window
         editor.destroy()
         
-    def on_entry_change(self, frame, filepaths, field, entry_data):
-        new_value = entry_data['var'].get()
-        commit_btn = [w for w in frame.winfo_children() if isinstance(w, ttk.Button) and w['text'] in ["Commit?", "Committed"]][0]
+    def on_entry_change(self, frame, filepaths, field=None, field_data=None):
+        """Handle changes to entry fields"""
+        # Find the entry data for this frame
+        entry_data = next((e for e in self.file_entries if e['frame'] == frame), None)
+        if not entry_data:
+            return
         
-        if new_value != entry_data['original']:
-            entry_data['entry'].configure(style='Modified.TEntry')
-            commit_btn.configure(text="Commit?", style='Warning.TButton', state='normal')
-            commit_btn.grid()
-            self.update_commit_all_button()
+        has_changes = False
+        # Check all fields for changes
+        for f, data in entry_data['entries'].items():
+            if data['var'].get() != data['original']:
+                has_changes = True
+                data['entry'].configure(style='Modified.TEntry')
+            else:
+                data['entry'].configure(style='Modern.TEntry')
+        
+        # Show/hide commit button
+        if has_changes:
+            entry_data['commit_btn'].configure(text="Commit?", style='Warning.TButton', state='normal')
+            entry_data['commit_btn'].grid()
         else:
-            entry_data['entry'].configure(style='Modern.TEntry')
-            if all(e['var'].get() == e['original'] for e in [entry for entry in frame.entries.values()]):
-                commit_btn.grid_remove()
-            self.update_commit_all_button()
-            
+            entry_data['commit_btn'].grid_remove()
+        
+        # Update commit all button
+        self.update_commit_all_button()
+        
     def update_commit_all_button(self):
         # Count uncommitted changes
         uncommitted = 0
@@ -935,7 +1179,7 @@ class MetadataEditor:
     def sort_entries(self, field):
         self.sort_reverse[field] = not self.sort_reverse[field]
         
-        if field == 'parent_directory':
+        if field == 'pack':  # Changed from 'parent_directory'
             self.file_entries.sort(
                 key=lambda x: x['parent_dir'],
                 reverse=self.sort_reverse[field]
@@ -963,15 +1207,56 @@ class MetadataEditor:
     def pick_directory(self):
         directory = filedialog.askdirectory()
         if directory:
-            self.selected_directories.add(directory)
-            self.load_files_from_all_directories()
+            # Find all SM/SSC files and their parent packs
+            packs = set()
+            sm_files_found = False
+            
+            for root, _, files in os.walk(directory):
+                for file in files:
+                    if file.endswith(('.sm', '.ssc')):
+                        sm_files_found = True
+                        # Get the song directory and its parent (pack directory)
+                        song_dir = os.path.dirname(os.path.join(root, file))
+                        pack_dir = os.path.dirname(song_dir)
+                        pack_name = os.path.basename(pack_dir)
+                        
+                        # If we're selecting a song directory or pack directory directly
+                        if pack_dir == directory:  # Selected a pack directory
+                            self.load_selected_packs(directory, {directory})
+                            return
+                        elif song_dir == directory:  # Selected a song directory
+                            self.load_selected_packs(os.path.dirname(directory), {os.path.dirname(directory)})
+                            return
+                        elif pack_name and pack_name != os.path.basename(directory):
+                            packs.add((pack_name, pack_dir))
+            
+            if packs:
+                # Show pack selector with pack names only
+                PackSelector(
+                    self.root,
+                    {name for name, _ in packs},
+                    lambda selected: self.load_selected_packs(
+                        directory, 
+                        {path for name, path in packs if name in selected}
+                    )
+                )
+            elif sm_files_found:  # If we found SM files but no packs, load the directory directly
+                self.load_selected_packs(os.path.dirname(directory), {directory})
+            else:
+                messagebox.showinfo(
+                    "No Songs Found",
+                    "No StepMania files (.sm/.ssc) were found in the selected directory."
+                )
     
-    def clear_directories(self):
+    def load_selected_packs(self, base_directory, selected_pack_paths):
+        # Clear existing directories
         self.selected_directories.clear()
-        # Clear existing entries
-        for entry in self.file_entries:
-            entry['frame'].destroy()
-        self.file_entries.clear()
+        
+        # Add the selected pack paths directly
+        self.selected_directories.update(selected_pack_paths)
+        
+        # Load files from selected directories
+        self.load_files_from_all_directories()
     
     def load_files_from_all_directories(self):
         # Clear existing entries
@@ -1045,6 +1330,12 @@ class MetadataEditor:
                     combined_metadata.get('GENRE', ''),
                     metadata_list[0].get('MUSIC', '')  # Use music from first file
                 )
+        
+        # Show buttons when files are loaded
+        if self.file_entries:
+            self.clear_button.pack(side=tk.LEFT, padx=5)
+            self.bulk_edit_button.pack(side=tk.LEFT, padx=5)
+            self.search_credits_button.pack(side=tk.LEFT, padx=5)
     
     def read_metadata(self, filepath):
         metadata = {}
@@ -1080,54 +1371,125 @@ class MetadataEditor:
             return None
 
     def cleanup_and_exit(self):
-        # Stop any playing music
-        if pygame.mixer.get_init():
-            if pygame.mixer.music.get_busy():
-                pygame.mixer.music.stop()
-            pygame.mixer.quit()
-        
-        # Clear file entries
-        for entry in self.file_entries:
-            entry['frame'].destroy()
-        self.file_entries.clear()
-        
-        self.root.destroy()
+        try:
+            # Stop any playing audio
+            if pygame.mixer.get_init():
+                if pygame.mixer.music.get_busy():
+                    pygame.mixer.music.stop()
+                pygame.mixer.quit()
+            
+            # Clear file entries
+            for entry in self.file_entries:
+                entry['frame'].destroy()
+            self.file_entries.clear()
+            
+        except Exception as e:
+            print(f"Error during cleanup: {str(e)}")
+        finally:
+            self.root.destroy()  # Always ensure window is destroyed
 
     def show_artwork_preview(self, entry_frame, artwork_url):
+        # Create preview window with fixed size
         preview_window = tk.Toplevel(self.root)
         preview_window.title("Album Artwork Preview")
-        preview_window.geometry("800x400")
+        preview_window.geometry("800x600")  # Set initial size
+        preview_window.resizable(False, False)  # Prevent resizing
 
-        # Find the current jacket file
+        # Create main content frame for images and labels
+        content_frame = ttk.Frame(preview_window)
+        content_frame.pack(fill=tk.X, padx=10, pady=10)  # Changed to fill=tk.X
+
+        # Create left and right frames for the artwork
+        left_frame = ttk.Frame(content_frame)
+        left_frame.pack(side=tk.LEFT, expand=True, padx=10)
+
+        right_frame = ttk.Frame(content_frame)
+        right_frame.pack(side=tk.RIGHT, expand=True, padx=10)
+
+        # Find the current jacket file and reference
         entry_data = next((e for e in self.file_entries if e['frame'] == entry_frame), None)
         if not entry_data:
             return
 
         directory = os.path.dirname(entry_data['filepaths'][0])
         
-        # Create main frame with two columns
-        main_frame = ttk.Frame(preview_window)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Create frames for current and new artwork
-        current_frame = ttk.LabelFrame(main_frame, text="Current Artwork")
-        current_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        
-        new_frame = ttk.LabelFrame(main_frame, text="New Artwork")
-        new_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        
-        # Load current jacket
+        # Get current jacket reference from file
+        current_jacket_ref = None
+        jacket_line_exists = False
         current_img = None
         jacket_path = None
-        for file in os.listdir(directory):
-            if file.lower().endswith(('.jpg', '.jpeg', '.png')) and 'jacket' in file.lower():
-                jacket_path = os.path.join(directory, file)
-                try:
-                    current_img = Image.open(jacket_path)
-                    break
-                except Exception:
-                    continue
         
+        # First check for explicit reference in the SM/SSC files
+        for filepath in entry_data['filepaths']:
+            content, encoding = MetadataUtil.read_file_with_encoding(filepath)
+            if content:
+                for line in content:
+                    if line.startswith('#JACKET:'):
+                        jacket_line_exists = True
+                        ref = line.split(':', 1)[1].strip().rstrip(';')
+                        if ref:  # If we found a non-empty reference
+                            current_jacket_ref = ref
+                            break
+                if current_jacket_ref:  # If we found a reference, stop checking files
+                    break
+
+        # Try to find the jacket image in this order:
+        # 1. Explicit reference from SM/SSC file
+        # 2. Any PNG file with "jacket" in the name
+        # 3. Default to creating a new jacket.png
+        
+        if current_jacket_ref:
+            # Try exact match first
+            exact_path = os.path.join(directory, current_jacket_ref)
+            try:
+                current_img = Image.open(exact_path)
+                jacket_path = exact_path
+            except Exception:
+                # If exact match fails, try wildcard search
+                base_name = os.path.splitext(current_jacket_ref)[0]
+                for file in os.listdir(directory):
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png')) and base_name.lower() in file.lower():
+                        try:
+                            jacket_path = os.path.join(directory, file)
+                            current_img = Image.open(jacket_path)
+                            break
+                        except Exception:
+                            continue
+
+        # If no image found from explicit reference, look for PNG files ending with "jacket.png"
+        if not current_img:
+            for file in os.listdir(directory):
+                # Check specifically for filenames ending with "jacket.png" (case insensitive)
+                if file.lower().endswith('jacket.png'):
+                    try:
+                        jacket_path = os.path.join(directory, file)
+                        current_img = Image.open(jacket_path)
+                        current_jacket_ref = file  # Update reference to found file
+                        break
+                    except Exception:
+                        continue
+
+        # If still no image found, set default path
+        if not current_img:
+            jacket_path = os.path.join(directory, "jacket.png")
+            if not current_jacket_ref:
+                current_jacket_ref = "jacket.png"
+
+        # If no current jacket found or reference is invalid
+        if not current_img:
+            jacket_path = os.path.join(directory, "SM_MDE_Jacket.png")
+            ttk.Label(left_frame, text="No current artwork found", style="Modern.TLabel").pack(padx=10, pady=10)
+        else:
+            # Display current artwork
+            current_img.thumbnail((350, 350))
+            current_photo = ImageTk.PhotoImage(current_img)
+            current_label = ttk.Label(left_frame, image=current_photo)
+            current_label.image = current_photo
+            current_label.pack(padx=10, pady=10)
+            ttk.Label(left_frame, 
+                     text=f"Dimensions: {current_img.size[0]}x{current_img.size[1]}" if current_img else "",
+                     style="Modern.TLabel").pack(pady=(0, 10))
+
         # Load new artwork
         try:
             response = requests.get(artwork_url)
@@ -1137,73 +1499,102 @@ class MetadataEditor:
             preview_window.destroy()
             return
         
-        # Display current artwork if found
-        if current_img:
-            # Resize maintaining aspect ratio
-            current_img.thumbnail((350, 350))
-            current_photo = ImageTk.PhotoImage(current_img)
-            current_label = ttk.Label(current_frame, image=current_photo)
-            current_label.image = current_photo
-            current_label.pack(padx=10, pady=10)
-            
-            # Add dimensions label
-            ttk.Label(current_frame, 
-                     text=f"Dimensions: {current_img.size[0]}x{current_img.size[1]}",
-                     style="Modern.TLabel").pack()
-        else:
-            ttk.Label(current_frame, 
-                     text="No current artwork found",
-                     style="Modern.TLabel").pack(padx=10, pady=10)
-        
         # Display new artwork
         new_img.thumbnail((350, 350))
         new_photo = ImageTk.PhotoImage(new_img)
-        new_label = ttk.Label(new_frame, image=new_photo)
+        new_label = ttk.Label(right_frame, image=new_photo)
         new_label.image = new_photo
         new_label.pack(padx=10, pady=10)
         
-        # Add dimensions label
-        ttk.Label(new_frame, 
+        # Add dimensions labels
+        ttk.Label(right_frame, 
                  text=f"Dimensions: {new_img.size[0]}x{new_img.size[1]}",
-                 style="Modern.TLabel").pack()
+                 style="Modern.TLabel").pack(pady=(0, 10))
         
-        # Add buttons frame
+        # Add buttons frame at the bottom
         button_frame = ttk.Frame(preview_window)
         button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
-        
+
+        # Configure two equal columns for buttons
+        button_frame.grid_columnconfigure(0, weight=1)
+        button_frame.grid_columnconfigure(1, weight=1)
+
         # Keep current button
         keep_button = ttk.Button(
             button_frame, 
             text="Keep Current", 
             command=preview_window.destroy,
-            style="Modern.TButton"
+            style="Modern.TButton",
+            width=20
         )
-        keep_button.pack(side=tk.LEFT, padx=5)
-        
-        # Update button (only if current artwork exists)
-        if current_img and jacket_path:
-            update_button = ttk.Button(
-                button_frame, 
-                text="Update Artwork",
-                command=lambda: self.update_artwork(
-                    jacket_path, 
-                    new_img, 
-                    current_img.size,
-                    preview_window
-                ),
-                style="Modern.TButton"
-            )
-            update_button.pack(side=tk.RIGHT, padx=5)
-        
-        # Ensure proper window sizing
-        preview_window.update_idletasks()
-        preview_window.geometry("")  # Reset geometry to fit content
+        keep_button.grid(row=0, column=0, padx=20, sticky='nsew')
 
-    def update_artwork(self, jacket_path, new_img, target_size, preview_window):
+        # Update button
+        update_button = ttk.Button(
+            button_frame, 
+            text="Update Artwork",
+            command=lambda: self.update_artwork(
+                jacket_path, 
+                new_img,
+                (
+                    max(512, current_img.size[0]) if current_img and current_img.size[0] >= 512 
+                    else min(512, new_img.size[0]),
+                    max(512, current_img.size[1]) if current_img and current_img.size[1] >= 512 
+                    else min(512, new_img.size[1])
+                ),
+                preview_window,
+                entry_data['filepaths'],
+                current_jacket_ref
+            ),
+            style="Modern.TButton",
+            width=20
+        )
+        update_button.grid(row=0, column=1, padx=20, sticky='nsew')
+
+    def update_artwork(self, jacket_path, new_img, target_size, preview_window, filepaths, current_jacket_ref):
         try:
             # Resize new image to match current dimensions
             resized_img = new_img.resize(target_size, Image.Resampling.LANCZOS)
             resized_img.save(jacket_path)
+            
+            # Get the new jacket filename (relative path)
+            new_jacket_name = os.path.basename(jacket_path)
+            
+            # Get all related files (both SM and SSC)
+            directory = os.path.dirname(filepaths[0])
+            base_name = os.path.splitext(os.path.basename(filepaths[0]))[0]
+            all_files = []
+            
+            # Find all related SM and SSC files
+            for file in os.listdir(directory):
+                if file.startswith(base_name) and file.endswith(('.sm', '.ssc')):
+                    all_files.append(os.path.join(directory, file))
+            
+            # Update JACKET line in all files
+            for filepath in all_files:
+                content, encoding = MetadataUtil.read_file_with_encoding(filepath)
+                if not content:
+                    continue
+                    
+                jacket_line_exists = False
+                title_line_index = None
+                
+                # First pass: look for existing JACKET line and TITLE line
+                for i, line in enumerate(content):
+                    if line.startswith('#JACKET:'):
+                        content[i] = f'#JACKET:{new_jacket_name};\n'
+                        jacket_line_exists = True
+                    elif line.startswith('#TITLE:'):
+                        title_line_index = i
+                
+                # If no JACKET line exists, add it after TITLE
+                if not jacket_line_exists and title_line_index is not None:
+                    content.insert(title_line_index + 1, f'#JACKET:{new_jacket_name};\n')
+                
+                # Write back to file
+                with open(filepath, 'w', encoding=encoding) as file:
+                    file.writelines(content)
+            
             messagebox.showinfo("Success", "Artwork updated successfully!")
             preview_window.destroy()
         except Exception as e:
@@ -1306,6 +1697,129 @@ class MetadataEditor:
         )
         close_btn.pack(pady=10)
 
+    def cleanup_audio(self):
+        if self.current_playing:
+            pygame.mixer.music.stop()
+            try:
+                self.current_playing.configure(text="▶")
+            except (tk.TclError, RuntimeError):
+                pass
+            self.current_playing = None
+
+    def clear_entries(self):
+        self.cleanup_audio()
+        # Rest of clear_entries method...
+
+    def reload_entries(self):
+        self.cleanup_audio()
+        # Rest of reload_entries method...
+
+    def clear_directories(self):
+        """Clear all loaded directories and reset the UI"""
+        # Stop any playing audio
+        if pygame.mixer.get_init() and pygame.mixer.music.get_busy():
+            pygame.mixer.music.stop()
+            if self.current_playing:
+                try:
+                    self.current_playing.configure(text="▶")
+                except (tk.TclError, RuntimeError):
+                    pass
+                self.current_playing = None
+        
+        # Clear directories
+        self.selected_directories.clear()
+        
+        # Clear existing entries
+        for entry in self.file_entries:
+            entry['frame'].destroy()
+        self.file_entries.clear()
+        
+        # Hide buttons
+        self.clear_button.pack_forget()
+        self.bulk_edit_button.pack_forget()
+        self.search_credits_button.pack_forget()
+        
+        # Remove credit filter
+        self.apply_credit_filter(set())
+
+    def collect_credits(self):
+        """Collect all unique credits from loaded files"""
+        all_credits = set()
+        has_no_credits = False
+        
+        for entry_data in self.file_entries:
+            entry_has_credits = False
+            for filepath in entry_data['filepaths']:
+                metadata = MetadataUtil.read_metadata(filepath)
+                if 'CREDITS' in metadata:
+                    # Filter out empty or whitespace-only credits
+                    valid_credits = {credit for credit in metadata['CREDITS'] 
+                                   if credit and not credit.isspace()}
+                    if valid_credits:
+                        entry_has_credits = True
+                        all_credits.update(valid_credits)
+        
+            if not entry_has_credits:
+                has_no_credits = True
+        
+        if has_no_credits:
+            all_credits.add("No Credits! :(")
+        
+        return all_credits
+
+    def show_credit_search(self):
+        """Show the credit search dialog"""
+        credits = self.collect_credits()
+        CreditSelector(self.root, sorted(credits), self.apply_credit_filter)
+
+    def apply_credit_filter(self, selected_credits):
+        """Filter entries based on selected credits"""
+        if not selected_credits:
+            # If no credits selected, show all entries
+            for entry in self.file_entries:
+                entry['frame'].pack()
+            # Remove filter indicator if it exists
+            if hasattr(self, 'filter_label'):
+                self.filter_label.destroy()
+                delattr(self, 'filter_label')
+            return
+
+        shown_count = 0
+        total_count = len(self.file_entries)
+        
+        for entry in self.file_entries:
+            show_entry = False
+            entry_credits = set()
+            
+            # Collect credits from all files in the entry
+            for filepath in entry['filepaths']:
+                metadata = MetadataUtil.read_metadata(filepath)
+                if 'CREDITS' in metadata:
+                    entry_credits.update(metadata['CREDITS'])
+            
+            # Show entry if it has any of the selected credits
+            if entry_credits & selected_credits:
+                show_entry = True
+                shown_count += 1
+            
+            if show_entry:
+                entry['frame'].pack()
+            else:
+                entry['frame'].pack_forget()
+        
+        # Update or create filter indicator
+        filter_text = f"Showing {shown_count} of {total_count} songs"
+        if hasattr(self, 'filter_label'):
+            self.filter_label.configure(text=filter_text)
+        else:
+            self.filter_label = ttk.Label(
+                self.button_frame,
+                text=filter_text,
+                style="Modern.TLabel",
+                font=("Helvetica", 10)
+            )
+            self.filter_label.pack(side=tk.LEFT, padx=10)
+
 class FileEntry:
     def __init__(self, parent_frame, filepaths, metadata, callbacks):
         self.frame = ttk.Frame(parent_frame, style="Modern.TFrame")
@@ -1349,6 +1863,202 @@ class FileEntry:
         for entry_data in self.entries.values():
             entry_data['original'] = entry_data['var'].get()
             entry_data['entry'].configure(style='Committed.TEntry')
+
+class CreditSelector:
+    def __init__(self, root, credits=None, on_filter=None):
+        self.window = tk.Toplevel(root)
+        self.window.title("Select Credits")
+        self.credits = credits or []
+        self.selected_credits = set()
+        self.on_filter = on_filter  # Add callback for filtering
+        
+        # Create custom styles (similar to PackSelector)
+        style = ttk.Style()
+        style.configure("Credit.TButton", 
+                       padding=5,
+                       width=30,
+                       foreground="black",
+                       font=("Helvetica", 10))
+        style.configure("CreditSelected.TButton",
+                       padding=5,
+                       width=30,
+                       foreground="green",
+                       font=("Helvetica", 10, "bold"))
+        
+        if not self.credits:
+            self.show_no_credits_message()
+        else:
+            self.setup_ui()
+            
+    def show_no_credits_message(self):
+        # Main frame
+        main_frame = ttk.Frame(self.window, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Message
+        message = ttk.Label(
+            main_frame,
+            text="Whoops, no one has claimed credit for these files!",
+            style="Modern.TLabel",
+            font=("Helvetica", 12),
+            wraplength=300,
+            justify=tk.CENTER
+        )
+        message.pack(pady=(20, 30))
+        
+        # Back button
+        ttk.Button(
+            main_frame,
+            text="Back to Main Menu",
+            command=self.window.destroy,
+            style="Modern.TButton"
+        ).pack()
+        
+        # Center the window
+        self.window.geometry("400x200")
+        self.window.transient(self.window.master)
+        self.window.grab_set()
+        
+    def setup_ui(self):
+        # Main frame
+        main_frame = ttk.Frame(self.window, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Info label
+        info_text = ("Select credits to filter songs by their creators.\n"
+                    "You can select multiple credits to see all songs by those creators.")
+        info_label = ttk.Label(
+            main_frame,
+            text=info_text,
+            style="Modern.TLabel",
+            wraplength=780,
+            justify=tk.CENTER
+        )
+        info_label.pack(pady=(0, 10))
+        
+        # Add Select All/Deselect All buttons at the top
+        top_button_frame = ttk.Frame(main_frame)
+        top_button_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Button(
+            top_button_frame,
+            text="Select All",
+            command=self.select_all_credits,
+            style="Modern.TButton"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            top_button_frame,
+            text="Deselect All",
+            command=self.deselect_all_credits,
+            style="Modern.TButton"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Create scrollable frame for credit buttons
+        canvas = tk.Canvas(main_frame, background="#f0f0f0")
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        self.scrollable_frame = ttk.Frame(canvas)
+        
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        # Configure grid for buttons (4 columns)
+        for i in range(4):
+            self.scrollable_frame.grid_columnconfigure(i, weight=1, minsize=200)
+        
+        # Calculate window size
+        num_credits = len(self.credits)
+        window_width = min(1200, max(800, (250 * 4) + 50))
+        window_height = min(800, max(600, (50 * ((num_credits // 4) + 1)) + 150))
+        self.window.geometry(f"{window_width}x{window_height}")
+        
+        # Create credit buttons
+        row = 0
+        col = 0
+        for credit in sorted(self.credits, key=str.lower):
+            btn = ttk.Button(
+                self.scrollable_frame,
+                text=credit,
+                command=lambda c=credit: self.toggle_credit(c),
+                style="Credit.TButton"
+            )
+            btn.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            
+            # Add tooltip
+            ToolTip(btn, credit)
+            
+            col += 1
+            if col >= 4:
+                col = 0
+                row += 1
+        
+        # Configure scrollable frame width
+        self.scrollable_frame.configure(width=window_width - 50)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Create bottom button frame
+        button_frame = ttk.Frame(self.window)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Add buttons
+        ttk.Button(
+            button_frame,
+            text="Filter by Credit",
+            command=self.apply_filter,
+            style="Modern.TButton"
+        ).pack(side=tk.RIGHT, padx=5)
+        
+        ttk.Button(
+            button_frame,
+            text="Cancel",
+            command=self.window.destroy,
+            style="Modern.TButton"
+        ).pack(side=tk.RIGHT, padx=5)
+        
+    def toggle_credit(self, credit):
+        if credit in self.selected_credits:
+            self.selected_credits.remove(credit)
+            style = "Credit.TButton"
+        else:
+            self.selected_credits.add(credit)
+            style = "CreditSelected.TButton"
+        
+        # Update button style
+        for widget in self.scrollable_frame.winfo_children():
+            if isinstance(widget, ttk.Button) and widget['text'] == credit:
+                widget.configure(style=style)
+                break
+    
+    def apply_filter(self):
+        if self.on_filter:
+            self.on_filter(self.selected_credits)
+        self.window.destroy()
+
+    def select_all_credits(self):
+        self.selected_credits.update(self.credits)
+        for widget in self.scrollable_frame.winfo_children():
+            if isinstance(widget, ttk.Button):
+                widget.configure(style="CreditSelected.TButton")
+
+    def deselect_all_credits(self):
+        self.selected_credits.clear()
+        for widget in self.scrollable_frame.winfo_children():
+            if isinstance(widget, ttk.Button):
+                widget.configure(style="Credit.TButton")
 
 def main():
     root = tk.Tk()
