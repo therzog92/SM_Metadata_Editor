@@ -1,4 +1,8 @@
 # Stepmania Metadata Editor
+# v1.1 available for testing!
+
+
+# v1.0
 
 A user-friendly tool for managing and editing metadata in Stepmania song files (.sm and .ssc formats).
 
