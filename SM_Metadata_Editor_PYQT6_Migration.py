@@ -37,7 +37,8 @@ COLUMN_WIDTHS = {
     'artist': 250,
     'genre': 250,
     'status': 30,
-    'commit': 80
+    'commit': 80,
+    'id': 0
 }
 SHAZAM_BUTTON_NORMAL = {
     "text": "Shazam Mode: OFF",
@@ -157,6 +158,9 @@ class MetadataEditor(QMainWindow):
             print(f"Warning: Shazam initialization failed - {str(e)}")
             self.loop = None
             self.shazam = None
+        
+        # Add at the start of __init__
+        self.entry_counter = 1  # Start at 1 for more human-readable IDs
 
     def setup_ui(self):
         """Setup the main UI components"""
@@ -293,7 +297,24 @@ class MetadataEditor(QMainWindow):
     def setup_table(self):
         """Set up the main table widget"""
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)  # Add one more column for ID
+        
+        # Define column indices
+        self.COL_CHECKBOX = 0
+        self.COL_ACTIONS = 1
+        self.COL_TYPE = 2
+        self.COL_PACK = 3
+        self.COL_TITLE = 4
+        self.COL_SUBTITLE = 5
+        self.COL_ARTIST = 6
+        self.COL_GENRE = 7
+        self.COL_STATUS = 8
+        self.COL_COMMIT = 9
+        self.COL_ID = 10
+        
+        # Set headers
+        headers = ['', 'Actions', 'Type', 'Pack', 'Title', 'Subtitle', 'Artist', 'Genre', 'Status', 'Commit', 'ID']
+        self.table.setHorizontalHeaderLabels(headers)
         
         # Set edit triggers for single-click editing
         self.table.setEditTriggers(
@@ -306,10 +327,6 @@ class MetadataEditor(QMainWindow):
         # Set selection behavior
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-        
-        # Set headers
-        headers = ['', 'Actions', 'Type', 'Pack', 'Title', 'Subtitle', 'Artist', 'Genre', 'Status', 'Commit']
-        self.table.setHorizontalHeaderLabels(headers)
         
         # Set lighter selection color
         self.table.setStyleSheet("""
@@ -334,17 +351,21 @@ class MetadataEditor(QMainWindow):
     def create_file_entry_with_type(self, filepaths, file_type, parent_dir, title, subtitle, artist, genre, music_file):
         """Create a file entry with specified type in the table"""
         try:
-            # Initialize table if not already done
-            if not hasattr(self, 'table'):
-                self.table = QTableWidget()
-                self.setup_table()
-                
             row = self.table.rowCount()
             self.table.insertRow(row)
             
-            # Store entry data
+            # Create unique ID and increment counter
+            entry_id = str(self.entry_counter)
+            self.entry_counter += 1
+            
+            # Add empty checkbox column item and make it non-editable
+            checkbox_item = QTableWidgetItem("")
+            checkbox_item.setFlags(checkbox_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, self.COL_CHECKBOX, checkbox_item)
+            
+            # Store entry data with ID
             entry_data = {
-                'row': row,
+                'id': entry_id,
                 'filepaths': filepaths,
                 'original_values': {
                     'title': title,
@@ -353,22 +374,17 @@ class MetadataEditor(QMainWindow):
                     'genre': genre
                 }
             }
-
-            # Create checkbox column
-            checkbox = QCheckBox()
-            checkbox.setVisible(False)
-            checkbox_container = QWidget()
-            checkbox_layout = QHBoxLayout(checkbox_container)
-            checkbox_layout.addWidget(checkbox)
-            checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            checkbox_layout.setContentsMargins(0, 0, 0, 0)
-            self.table.setCellWidget(row, 0, checkbox_container)
-            entry_data['checkbox'] = checkbox
-
-            # Create action buttons
-            action_widget = self.create_action_buttons(row, filepaths, music_file)
-            self.table.setCellWidget(row, 1, action_widget)
-
+            self.file_entries.append(entry_data)
+            
+            # Add ID to table
+            id_item = QTableWidgetItem(entry_id)
+            id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, self.COL_ID, id_item)
+            
+            # Create action buttons with ID reference
+            action_widget = self.create_action_buttons(row, filepaths, music_file, entry_id)
+            self.table.setCellWidget(row, self.COL_ACTIONS, action_widget)
+            
             # Set file type and parent directory (read-only)
             type_item = QTableWidgetItem(file_type)
             type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -400,11 +416,6 @@ class MetadataEditor(QMainWindow):
             commit_item.setFlags(commit_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 9, commit_item)
 
-            # Store the entry data
-            if not hasattr(self, 'file_entries'):
-                self.file_entries = []
-            self.file_entries.append(entry_data)
-            
             return entry_data
 
         except Exception as e:
@@ -480,26 +491,34 @@ class MetadataEditor(QMainWindow):
     def commit_changes(self, row, filepaths):
         """Commit changes for a specific row"""
         try:
-            entry = next((e for e in self.file_entries if e['row'] == row), None)
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                return
+                
+            # Find the entry in backend data using ID
+            entry_id = id_item.text()
+            entry = next((e for e in self.file_entries if e['id'] == entry_id), None)
             if not entry:
                 return
             
             # Get current values from table
             metadata = {
-                'TITLE': self.table.item(row, 4).text() if self.table.item(row, 4) else '',
-                'SUBTITLE': self.table.item(row, 5).text() if self.table.item(row, 5) else '',
-                'ARTIST': self.table.item(row, 6).text() if self.table.item(row, 6) else '',
-                'GENRE': self.table.item(row, 7).text() if self.table.item(row, 7) else ''
+                'TITLE': self.table.item(row, self.COL_TITLE).text() if self.table.item(row, self.COL_TITLE) else '',
+                'SUBTITLE': self.table.item(row, self.COL_SUBTITLE).text() if self.table.item(row, self.COL_SUBTITLE) else '',
+                'ARTIST': self.table.item(row, self.COL_ARTIST).text() if self.table.item(row, self.COL_ARTIST) else '',
+                'GENRE': self.table.item(row, self.COL_GENRE).text() if self.table.item(row, self.COL_GENRE) else ''
             }
             
+            # Write changes to the actual files
             success = True
-            for filepath in filepaths:
+            for filepath in entry['filepaths']:  # Use filepaths from entry
                 if not MetadataUtil.write_metadata(filepath, metadata):
                     success = False
                     break
             
             if success:
-                # Update original values
+                # Update original values in backend data
                 entry['original_values'].update({
                     'title': metadata['TITLE'],
                     'subtitle': metadata['SUBTITLE'],
@@ -507,32 +526,14 @@ class MetadataEditor(QMainWindow):
                     'genre': metadata['GENRE']
                 })
                 
-                # Clear existing status cell first
-                self.table.removeCellWidget(row, 8)
-                self.table.setItem(row, 8, QTableWidgetItem(""))
-                
-                # Update status to checkmark
-                status_container = QWidget()
-                status_layout = QHBoxLayout(status_container)
-                status_layout.setContentsMargins(0, 0, 0, 0)
-                status_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                
-                status_label = QLabel("✓")
-                status_label.setStyleSheet("color: #32CD32;")  # Lime green
-                status_label.setToolTip("Changes saved")
-                status_layout.addWidget(status_label)
-                
-                self.table.setCellWidget(row, 8, status_container)
-                self.table.removeCellWidget(row, 9)  # Remove commit button
+                # Update status columns
+                self.table.removeCellWidget(row, self.COL_STATUS)
+                self.table.setItem(row, self.COL_STATUS, QTableWidgetItem(""))
+                self.table.removeCellWidget(row, self.COL_COMMIT)
+                self.table.setItem(row, self.COL_COMMIT, QTableWidgetItem(""))
                 
                 # Update commit all button
                 self.update_commit_all_button()
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Error",
-                    "Failed to save changes to one or more files."
-                )
             
         except Exception as e:
             print(f"Error in commit_changes: {str(e)}")
@@ -584,8 +585,8 @@ class MetadataEditor(QMainWindow):
                 import traceback
                 traceback.print_exc()
 
-    def play_audio(self, music_path, play_btn, row):
-        """Play audio file and handle Shazam if enabled"""
+    def play_audio(self, music_path, play_btn, entry_id):
+        """Play audio file with fallback logic"""
         try:
             # Handle current playing button
             try:
@@ -596,121 +597,129 @@ class MetadataEditor(QMainWindow):
                         self.current_playing = None
                         return
             except RuntimeError:
-                # Button was deleted, reset current_playing
                 self.current_playing = None
             except Exception as e:
                 print(f"Error handling current playing button: {str(e)}")
                 self.current_playing = None
 
             directory = os.path.dirname(music_path)
-            base_name = os.path.splitext(os.path.basename(music_path))[0]
+            base_filename = os.path.basename(music_path)
             found_playable = False
-            actual_path = music_path
+            actual_path = None
 
-            print(f"Attempting to play: {music_path}")
-            print(f"Shazam mode is: {self.shazam_mode}")
-            print(f"Row is: {row}")
-
-            # Try exact path first
+            # Priority 1: Exact filepath
             if os.path.exists(music_path):
                 try:
                     pygame.mixer.music.load(music_path)
                     found_playable = True
                     actual_path = music_path
-                    print("Found exact file match")
+                    print(f"Using exact file: {music_path}")
                 except Exception as e:
                     print(f"Failed to load exact file: {str(e)}")
 
-            # If exact path fails, try to find a matching audio file
+            # Priority 2: Using filename as mask
+            if not found_playable and base_filename:
+                mask_term = os.path.splitext(base_filename)[0]
+                for file in os.listdir(directory):
+                    if mask_term in file and file.lower().endswith(tuple(SUPPORTED_AUDIO)):
+                        try:
+                            test_path = os.path.join(directory, file)
+                            pygame.mixer.music.load(test_path)
+                            found_playable = True
+                            actual_path = test_path
+                            print(f"Using masked file: {test_path}")
+                            break
+                        except Exception as e:
+                            print(f"Failed to load masked file {file}: {str(e)}")
+
+            # Priority 3: Any supported audio file (smallest one)
             if not found_playable:
-                print(f"Searching directory for matching file...")
-                try:
-                    matching_files = []
-                    for file in os.listdir(directory):
-                        if file.lower().endswith(tuple(SUPPORTED_AUDIO)):
-                            full_path = os.path.join(directory, file)
-                            matching_files.append(full_path)
-                        
-                        # Sort by size and try each one
-                        if matching_files:
-                            matching_files.sort(key=lambda x: os.path.getsize(x))
-                            for full_path in matching_files:
-                                try:
-                                    pygame.mixer.music.load(full_path)
-                                    actual_path = full_path
-                                    found_playable = True
-                                    print(f"Found playable audio file: {full_path}")
-                                    break
-                                except Exception as e:
-                                    print(f"Failed to load file: {str(e)}")
+                audio_files = []
+                for file in os.listdir(directory):
+                    if file.lower().endswith(tuple(SUPPORTED_AUDIO)):
+                        file_path = os.path.join(directory, file)
+                        try:
+                            size = os.path.getsize(file_path)
+                            audio_files.append((size, file_path))
+                        except Exception as e:
+                            print(f"Failed to get size for {file}: {str(e)}")
 
-                except Exception as e:
-                    print(f"Error searching directory: {str(e)}")
+                if audio_files:
+                    # Sort by size, then by path (for same-size files)
+                    audio_files.sort(key=lambda x: (x[0], x[1]))
+                    try:
+                        pygame.mixer.music.load(audio_files[0][1])
+                        found_playable = True
+                        actual_path = audio_files[0][1]
+                        print(f"Using smallest audio file: {actual_path} ({audio_files[0][0]} bytes)")
+                    except Exception as e:
+                        print(f"Failed to load smallest audio file: {str(e)}")
 
-            try:
-                if found_playable:
-                    pygame.mixer.music.play()
-                    play_btn.setText("⏹")
-                    self.current_playing = play_btn
-                    print("Playing audio file")
-                else:
-                    print(f"No playable audio file found for: {music_path}")
-                    play_btn.setText("🔇")
-                    play_btn.setToolTip("No audio file found")
-                    # Don't disable the button
-            except Exception as e:
-                print(f"Error updating button state: {str(e)}")
+            if found_playable and actual_path:
+                pygame.mixer.music.play()
+                play_btn.setText("⏹")
+                play_btn.setEnabled(True)
+                self.current_playing = play_btn
+                
+                # If Shazam mode is active, analyze the file
+                if self.shazam_mode:
+                    current_row = self.find_row_by_id(entry_id)
+                    if current_row != -1:
+                        self.run_shazam_analysis(actual_path, current_row)
+            else:
+                print(f"No playable audio found in {directory}")
+                play_btn.setText("\U0001F507")  # Unicode for speaker with cancellation slash
+                play_btn.setEnabled(False)
+                play_btn.setToolTip("No audio file found")
 
-            # Always run Shazam if enabled
-            if self.shazam_mode:
-                print("Starting Shazam analysis...")
-                try:
-                    self.run_shazam_analysis(actual_path, row)
-                except Exception as e:
-                    print(f"Error running Shazam: {str(e)}")
-                    if not found_playable:
-                        print("No Shazam results found - no playable audio")
-                        
         except Exception as e:
-            print(f"Error playing audio: {str(e)}")
+            print(f"Error in play_audio: {str(e)}")
             traceback.print_exc()
 
-    def run_shazam_analysis(self, file_path, row):
-        """Run Shazam analysis in the background"""
+    def run_shazam_analysis(self, audio_path, row):
+        """Run Shazam analysis on an audio file"""
         try:
-            # Create a new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                print("Debug: No ID item found for row", row)
+                return
+                
+            entry_id = id_item.text()
+            print(f"Debug: Running Shazam analysis for ID {entry_id} at row {row}")
             
-            async def run_analysis():
-                try:
-                    shazam = Shazam()
-                    result = await shazam.recognize(file_path)
-                    
-                    if result and 'track' in result:
-                        track = result['track']
-                        shazam_data = {
-                            'title': track.get('title', ''),
-                            'artist': track.get('subtitle', ''),
-                            'genre': track.get('genres', {}).get('primary', ''),
-                            'images': {'coverart': track['share']['image']} if 'share' in track and 'image' in track['share'] else {}
-                        }
-                        # Use QTimer to safely update UI from main thread
-                        QTimer.singleShot(0, lambda: self.show_shazam_results(row, shazam_data))
-                    else:
-                        print("No Shazam results found")
-                except Exception as e:
-                    print(f"Error in Shazam analysis: {str(e)}")
-                    traceback.print_exc()
-                finally:
-                    loop.stop()
-
-            # Run the analysis in the event loop
-            loop.run_until_complete(run_analysis())
-            loop.close()
-
+            # Find current row for this ID (in case table was sorted)
+            current_row = self.find_row_by_id(entry_id)
+            if current_row == -1:
+                print(f"Debug: Could not find row for ID {entry_id}")
+                return
+            
+            print(f"Debug: Current row for ID {entry_id} is {current_row}")
+            
+            # Run Shazam analysis
+            try:
+                result = self.loop.run_until_complete(self.shazam.recognize_song(audio_path))
+                print(f"Debug: Shazam result: {result}")
+                
+                if result and 'track' in result:
+                    track = result['track']
+                    shazam_data = {
+                        'title': track.get('title', ''),
+                        'artist': track.get('subtitle', ''),
+                        'genre': track.get('genres', {}).get('primary', ''),
+                        'images': {'coverart': track['share']['image']} if 'share' in track and 'image' in track['share'] else {}
+                    }
+                    print(f"Debug: Processed Shazam data: {shazam_data}")
+                    self.show_shazam_results(current_row, shazam_data)  # Use current_row here
+                else:
+                    print("Debug: No Shazam results found")
+                
+            except Exception as e:
+                print(f"Debug: Error in Shazam analysis: {str(e)}")
+                traceback.print_exc()
+                
         except Exception as e:
-            print(f"Error starting Shazam analysis: {str(e)}")
+            print(f"Error in run_shazam_analysis: {str(e)}")
             traceback.print_exc()
 
     def open_file_location(self, directory):
@@ -811,25 +820,16 @@ class MetadataEditor(QMainWindow):
                 )
                 return
                 
-            # Count total songs first
-            total_songs = 0
-            for pack_dir in new_pack_paths:
-                for song_dir in next(os.walk(pack_dir))[1]:
-                    full_song_dir = os.path.join(pack_dir, song_dir)
-                    has_sm_or_ssc = False
-                    for file in os.listdir(full_song_dir):
-                        if file.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
-                            if not has_sm_or_ssc:  # Only count once per song directory
-                                total_songs += 1
-                                has_sm_or_ssc = True
-
-            # Add the new pack paths to existing ones
-            self.selected_directories.update(new_pack_paths)
+            # Get current table row count
+            existing_rows = self.table.rowCount()
             
             # Create progress dialog with better styling
             progress = QMessageBox(self)
             progress.setWindowTitle("Loading")
-            progress.setText(f"Loading selected packs... (0/{total_songs} songs)")
+            if existing_rows > 0:
+                progress.setText(f"Reloading {existing_rows} existing songs, loading new songs...")
+            else:
+                progress.setText("Loading selected packs...")
             progress.setStandardButtons(QMessageBox.StandardButton.NoButton)
             progress.setStyleSheet("""
                 QMessageBox {
@@ -839,6 +839,9 @@ class MetadataEditor(QMainWindow):
             """)
             progress.show()
             QApplication.processEvents()
+            
+            # Add the new pack paths to existing ones
+            self.selected_directories.update(new_pack_paths)
             
             # Clear existing table but preserve file_entries
             old_entries = self.file_entries.copy()
@@ -852,7 +855,10 @@ class MetadataEditor(QMainWindow):
             def update_progress():
                 nonlocal loaded_songs
                 loaded_songs += 1
-                progress.setText(f"Loading selected packs... ({loaded_songs}/{total_songs} songs)")
+                if existing_rows > 0:
+                    progress.setText(f"Reloading {existing_rows} existing songs... ({loaded_songs} new songs processed)")
+                else:
+                    progress.setText(f"Loading songs... ({loaded_songs} songs processed)")
                 QApplication.processEvents()
             
             # Pass the progress callback to load_files_from_all_directories
@@ -999,14 +1005,13 @@ class MetadataEditor(QMainWindow):
         
         # If search is empty, show all rows and update count
         if not search_text:
-            for entry in self.file_entries:
-                self.table.setRowHidden(entry['row'], False)
+            for row in range(self.table.rowCount()):
+                self.table.setRowHidden(row, False)
             self.update_display_count(total_count, total_count)
             return
         
-        for entry in self.file_entries:
-            row = entry['row']
-            
+        # For each row in the table
+        for row in range(self.table.rowCount()):
             # Get searchable text from table items
             searchable_fields = []
             
@@ -1037,7 +1042,7 @@ class MetadataEditor(QMainWindow):
             
             # Combine all fields and search
             searchable_text = ' '.join(searchable_fields).lower()
-            hide_row = search_text and search_text not in searchable_text
+            hide_row = search_text not in searchable_text
             
             self.table.setRowHidden(row, hide_row)
             if not hide_row:
@@ -1088,7 +1093,15 @@ class MetadataEditor(QMainWindow):
         
         # Apply to each selected row
         for row in selected_rows:
-            entry = next((e for e in self.file_entries if e['row'] == row), None)
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                continue
+            
+            # Find the entry in backend data using ID
+            entry_id = id_item.text()
+            entry = next((e for e in self.file_entries if e['id'] == entry_id), None)
+            
             if entry:
                 for field, value in new_values.items():
                     if value:  # Only update if value is not empty
@@ -1118,7 +1131,7 @@ class MetadataEditor(QMainWindow):
                 3. To use suggestions:
                    • Left-click to accept a new value
                    • Right-click to keep the original value
-                   • Click "Compare Artwork" to compare and 
+                    Click "Compare Artwork" to compare and 
                      choose between current and new jacket artwork
 
                 Remember: No changes are permanent until you click 'Commit'! :)
@@ -1177,7 +1190,14 @@ class MetadataEditor(QMainWindow):
             return
         
         try:
-            entry_data = next((e for e in self.file_entries if e['row'] == row), None)
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                return
+            
+            # Find the entry using ID instead of row
+            entry_id = id_item.text()
+            entry_data = next((e for e in self.file_entries if e['id'] == entry_id), None)
             if not entry_data:
                 return
 
@@ -1334,11 +1354,25 @@ class MetadataEditor(QMainWindow):
     def apply_shazam_value(self, row, field, value):
         """Apply a Shazam suggestion to a field"""
         try:
-            # Get the entry data first
-            entry_data = next((e for e in self.file_entries if e['row'] == row), None)
-            if not entry_data:
-                print(f"Warning: Could not find entry data for row {row}")
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
                 return
+            
+            # Find the entry using ID instead of row
+            entry_id = id_item.text()
+            entry_data = next((e for e in self.file_entries if e['id'] == entry_id), None)
+            if not entry_data:
+                print(f"Warning: Could not find entry data for ID {entry_id}")
+                return
+            
+            # Find the current row for this ID (in case table was sorted)
+            current_row = self.find_row_by_id(entry_id)
+            if current_row == -1:
+                return
+            
+            # Use current_row instead of row parameter from here on
+            row = current_row
 
             # Value is already escaped when passed from show_shazam_results
             escaped_value = str(value).strip()
@@ -1495,87 +1529,29 @@ class MetadataEditor(QMainWindow):
     def sort_table(self, column):
         """Sort table by clicked column header"""
         try:
-            field_map = {
-                3: 'pack',
-                4: 'title',
-                5: 'subtitle',
-                6: 'artist',
-                7: 'genre'
-            }
-            
-            if column not in field_map:
+            # Only handle sortable columns
+            if column not in [3, 4, 5, 6, 7]:  # pack, title, subtitle, artist, genre
                 return
-            
+                
+            # Store current sort order
+            field_map = {3: 'pack', 4: 'title', 5: 'subtitle', 6: 'artist', 7: 'genre'}
             field = field_map[column]
             self.sort_reverse[field] = not self.sort_reverse[field]
-
-            # 1. Get sort keys from the entry metadata directly
-            entries_with_keys = []
-            for entry in self.file_entries:
-                if field == 'pack':
-                    item = self.table.item(entry['row'], 3)
-                    sort_key = item.text().lower() if item else ''
-                else:
-                    # Use the original metadata widget from entry
-                    widget = entry['metadata'][field]
-                    sort_key = widget.text().lower() if widget else ''
-                entries_with_keys.append((sort_key, entry))
-
-            # 2. Sort entries
-            entries_with_keys.sort(key=lambda x: x[0], reverse=self.sort_reverse[field])
-
-            # 3. Disable table updates
-            self.table.setUpdatesEnabled(False)
             
-            try:
-                # 4. Store current widgets and items
-                old_state = {}
-                for i in range(self.table.rowCount()):
-                    old_state[i] = {
-                        'widgets': {
-                            col: self.table.cellWidget(i, col)
-                            for col in range(self.table.columnCount())
-                            if self.table.cellWidget(i, col)
-                        },
-                        'items': {
-                            col: self.table.item(i, col).text() if self.table.item(i, col) else ''
-                            for col in range(self.table.columnCount())
-                        },
-                        'height': self.table.rowHeight(i),
-                        'hidden': self.table.isRowHidden(i)
-                    }
-
-                # 5. Clear table content without destroying widgets
+            # Sort using Qt's built-in functionality
+            self.table.sortItems(column, Qt.SortOrder.AscendingOrder if not self.sort_reverse[field] 
+                                       else Qt.SortOrder.DescendingOrder)
+            
+            # Update file_entries row references
+            for entry in self.file_entries:
                 for row in range(self.table.rowCount()):
-                    for col in range(self.table.columnCount()):
-                        self.table.takeItem(row, col)
-                        if self.table.cellWidget(row, col):
-                            self.table.removeCellWidget(row, col)
-
-                # 6. Restore content in new order
-                for new_index, (_, entry) in enumerate(entries_with_keys):
-                    old_row = entry['row']
-                    entry['row'] = new_index  # Update entry reference
-
-                    # Restore widgets and items
-                    for col in range(self.table.columnCount()):
-                        if col in old_state[old_row]['widgets']:
-                            self.table.setCellWidget(new_index, col, old_state[old_row]['widgets'][col])
-                        else:
-                            self.table.setItem(new_index, col, QTableWidgetItem(old_state[old_row]['items'][col]))
-
-                    # Restore row properties
-                    self.table.setRowHeight(new_index, old_state[old_row]['height'])
-                    self.table.setRowHidden(new_index, old_state[old_row]['hidden'])
-
-            finally:
-                self.table.setUpdatesEnabled(True)
-                self.table.viewport().update()
-
+                    if self.table.item(row, 3) and entry['original_values'].get('pack') == self.table.item(row, 3).text():
+                        entry['row'] = row
+                        break
+                        
         except Exception as e:
             print(f"Sort error: {str(e)}")
-            self.table.setUpdatesEnabled(True)
-            QMessageBox.warning(self, "Sort Error", f"Failed to sort table: {str(e)}")
+            traceback.print_exc()
 
     def show_help_dialog(self):
         """Show the help dialog with usage instructions"""
@@ -1629,59 +1605,109 @@ class MetadataEditor(QMainWindow):
             QMessageBox.warning(self, "Error", f"Failed to load artwork: {str(e)}")
             
     def save_artwork(self, row, image):
-        """Save artwork to song directory"""
+        """Save artwork to song directory and update JACKET metadata"""
         try:
-            entry = next((e for e in self.file_entries if e['row'] == row), None)
-            if not entry:
-                return
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                print("Error: No ID found for row", row)
+                return False
+                
+            # Find the entry using ID instead of row
+            entry_id = id_item.text()
+            entry_data = next((e for e in self.file_entries if e['id'] == entry_id), None)
+            if not entry_data:
+                print(f"Error: Could not find entry data for ID {entry_id}")
+                return False
             
-            directory = os.path.dirname(entry['filepaths'][0])
-            image.save(os.path.join(directory, 'bg.png'))
-            QMessageBox.information(self, "Success", "Artwork saved as bg.png")
+            # Get the directory from the first filepath
+            directory = os.path.dirname(entry_data['filepaths'][0])
+            if not directory or not os.path.exists(directory):
+                print(f"Error: Invalid directory for ID {entry_id}")
+                return False
+            
+            # Save with default name if no JACKET field exists
+            jacket_filename = 'SM_MDE_Jacket.png'
+            output_path = os.path.join(directory, jacket_filename)
+            image.save(output_path)
+            
+            # Update metadata in all associated files
+            for filepath in entry_data['filepaths']:
+                content, encoding = MetadataUtil.read_file_with_encoding(filepath)
+                if not content:
+                    continue
+                
+                jacket_line_exists = False
+                
+                # Check if JACKET field exists
+                for i, line in enumerate(content):
+                    if line.startswith('#JACKET:'):
+                        content[i] = f'#JACKET:{jacket_filename};\n'
+                        jacket_line_exists = True
+                        break
+                
+                # If JACKET doesn't exist, add it after TITLE
+                if not jacket_line_exists:
+                    for i, line in enumerate(content):
+                        if line.startswith('#TITLE:'):
+                            content.insert(i + 1, f'#JACKET:{jacket_filename};\n')
+                            break
+                
+                # Write back to file
+                with open(filepath, 'w', encoding=encoding) as file:
+                    file.writelines(content)
+            
+            print(f"Successfully saved artwork to {output_path}")
+            QMessageBox.information(self, "Success", "Artwork Updated")
+            return True
             
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to save artwork: {str(e)}")
-            
-    def create_action_buttons(self, row, filepaths, music_file=''):
-        """Create action buttons (play, edit, folder) for a table row"""
+            error_msg = f"Failed to save artwork: {str(e)}"
+            print(error_msg)
+            traceback.print_exc()
+            QMessageBox.warning(self, "Error", error_msg)
+            return False
+
+    def create_action_buttons(self, row, filepaths, music_file='', entry_id=None):
+        """Create action buttons for a table row"""
         action_widget = QWidget()
         action_layout = QHBoxLayout(action_widget)
         action_layout.setContentsMargins(2, 2, 2, 2)
         action_layout.setSpacing(5)
+        
+        # Open folder button
+        folder_btn = QToolButton()
+        folder_btn.setText("...")
+        folder_btn.setMinimumWidth(30)
+        folder_btn.clicked.connect(
+            lambda: self.open_file_location(os.path.dirname(filepaths[0]))
+        )
+        action_layout.addWidget(folder_btn)
         
         # Play button
         play_btn = QToolButton()
         play_btn.setText("▶")
         play_btn.setMinimumWidth(30)
         if music_file:
+            # Create the full music path
+            music_path = os.path.join(os.path.dirname(filepaths[0]), music_file)
+            
+            # Simple lambda without default arguments
             play_btn.clicked.connect(
-                lambda: self.play_audio(
-                    os.path.join(os.path.dirname(filepaths[0]), music_file), 
-                    play_btn,
-                    row  # Add the row parameter here
-                )
+                lambda checked, mp=music_path, pb=play_btn, eid=entry_id: 
+                self.play_audio(mp, pb, eid)
             )
         else:
             play_btn.setEnabled(False)
-            play_btn.setToolTip("No music file found")
+            play_btn.setToolTip("No audio file found")
         action_layout.addWidget(play_btn)
         
         # Edit button
-        edit_btn = QPushButton("✎")
-        edit_btn.setToolTip("Edit Metadata")
+        edit_btn = QToolButton()
+        edit_btn.setText("✎")
         edit_btn.setMinimumWidth(30)
-        edit_btn.clicked.connect(lambda: self.edit_metadata(filepaths))
+        edit_btn.clicked.connect(lambda: self.edit_metadata(filepaths))  # Changed to edit_metadata
         action_layout.addWidget(edit_btn)
-        
-        # Open folder button
-        folder_btn = QPushButton("📂")
-        folder_btn.setToolTip("Open Folder")
-        folder_btn.setMinimumWidth(30)
-        folder_btn.clicked.connect(lambda: self.open_file_location(os.path.dirname(filepaths[0])))
-        action_layout.addWidget(folder_btn)
-        
-        # Add stretch to ensure buttons are left-aligned
-        action_layout.addStretch()
         
         return action_widget
 
@@ -1733,60 +1759,26 @@ class MetadataEditor(QMainWindow):
     def compare_artwork(self, row, shazam_url, song_directory):
         """Compare local artwork with Shazam artwork"""
         try:
-            # Find local jacket image
-            local_image = None
-            current_jacket_ref = None
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                print("Error: No ID found for row", row)
+                return
+                
+            # Find the entry using ID instead of row
+            entry_id = id_item.text()
+            entry_data = next((e for e in self.file_entries if e['id'] == entry_id), None)
+            if not entry_data:
+                print(f"Error: Could not find entry data for ID {entry_id}")
+                return
             
-            # First check for explicit reference in the SM/SSC files
-            entry_data = next((e for e in self.file_entries if e['row'] == row), None)
-            if entry_data:
-                for filepath in entry_data['filepaths']:
-                    content, encoding = MetadataUtil.read_file_with_encoding(filepath)
-                    if content:
-                        for line in content:
-                            if line.startswith('#JACKET:'):
-                                ref = line.split(':', 1)[1].strip().rstrip(';')
-                                if ref:
-                                    current_jacket_ref = ref
-                                    exact_path = os.path.join(song_directory, ref)
-                                    try:
-                                        local_image = Image.open(exact_path)
-                                        break
-                                    except Exception:
-                                        # If exact match fails, try wildcard search
-                                        base_name = os.path.splitext(ref)[0]
-                                        for file in os.listdir(song_directory):
-                                            if file.lower().endswith(('.jpg', '.jpeg', '.png')) and base_name.lower() in file.lower():
-                                                try:
-                                                    local_image = Image.open(os.path.join(song_directory, file))
-                                                    break
-                                                except Exception:
-                                                    continue
-                    if local_image:
-                        break
-
-            # If no image found from explicit reference, look for jacket.png
-            if not local_image:
-                for file in os.listdir(song_directory):
-                    if file.lower() in ['jacket.png', 'jacket.jpg', 'jacket.jpeg']:
-                        try:
-                            local_image = Image.open(os.path.join(song_directory, file))
-                            current_jacket_ref = file
-                            break
-                        except Exception:
-                            continue
-
-            # Download Shazam image
-            response = requests.get(shazam_url)
-            shazam_image = Image.open(BytesIO(response.content))
-            
-            # Create comparison dialog
+            # Create dialog
             dialog = QDialog(self)
             dialog.setWindowTitle("Compare Artwork")
             dialog.setMinimumWidth(500)
             layout = QVBoxLayout(dialog)
             
-            # Create image comparison area
+            # Create image comparison layout
             images_layout = QHBoxLayout()
             layout.addLayout(images_layout)
             
@@ -1795,6 +1787,34 @@ class MetadataEditor(QMainWindow):
             left_layout = QVBoxLayout(left_frame)
             left_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             
+            # Get JACKET value from metadata
+            metadata = MetadataUtil.read_metadata(entry_data['filepaths'][0])
+            jacket_ref = metadata.get('JACKET', '').strip()
+            local_image = None
+            current_jacket_ref = None
+            
+            if jacket_ref:
+                # First try exact path
+                exact_path = os.path.join(song_directory, jacket_ref)
+                if os.path.exists(exact_path):
+                    try:
+                        local_image = Image.open(exact_path)
+                        current_jacket_ref = jacket_ref
+                    except Exception as e:
+                        print(f"Error loading exact jacket path: {str(e)}")
+                else:
+                    # Try to find a file containing the jacket name (without extension)
+                    base_name = os.path.splitext(jacket_ref)[0].lower()
+                    for file in os.listdir(song_directory):
+                        if base_name in file.lower() and file.lower().endswith('.png'):
+                            try:
+                                local_image = Image.open(os.path.join(song_directory, file))
+                                current_jacket_ref = file
+                                break
+                            except Exception as e:
+                                print(f"Error loading matching jacket file: {str(e)}")
+            
+            # Display current artwork if found
             if local_image:
                 local_label = QLabel()
                 local_pixmap = ImageQt.toqpixmap(local_image.resize((200, 200)))
@@ -1803,7 +1823,9 @@ class MetadataEditor(QMainWindow):
                 left_layout.addWidget(QLabel(f"Current: {current_jacket_ref}"))
                 left_layout.addWidget(QLabel(f"Size: {local_image.size[0]}x{local_image.size[1]}"))
             else:
-                left_layout.addWidget(QLabel("No current artwork found"))
+                left_layout.addWidget(QLabel("No matching jacket artwork found"))
+                if jacket_ref:
+                    left_layout.addWidget(QLabel(f"(Looking for: {jacket_ref})"))
             
             images_layout.addWidget(left_frame)
             
@@ -1812,32 +1834,49 @@ class MetadataEditor(QMainWindow):
             right_layout = QVBoxLayout(right_frame)
             right_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             
-            shazam_label = QLabel()
-            shazam_pixmap = ImageQt.toqpixmap(shazam_image.resize((200, 200)))
-            shazam_label.setPixmap(shazam_pixmap)
-            right_layout.addWidget(shazam_label)
-            right_layout.addWidget(QLabel("Shazam Artwork"))
-            right_layout.addWidget(QLabel(f"Size: {shazam_image.size[0]}x{shazam_image.size[1]}"))
-            
-            images_layout.addWidget(right_frame)
-            
-            # Add buttons
-            button_layout = QHBoxLayout()
-            layout.addLayout(button_layout)
-            
-            keep_btn = QPushButton("Keep Current")
-            keep_btn.clicked.connect(dialog.reject)
-            button_layout.addWidget(keep_btn)
-            
-            update_btn = QPushButton("Update Artwork")
-            update_btn.clicked.connect(lambda: self.save_artwork(row, shazam_image))
-            button_layout.addWidget(update_btn)
-            
-            dialog.exec()
-            
+            # Download and display Shazam artwork
+            try:
+                response = requests.get(shazam_url)
+                shazam_image = Image.open(BytesIO(response.content))
+                
+                shazam_label = QLabel()
+                shazam_pixmap = ImageQt.toqpixmap(shazam_image.resize((200, 200)))
+                shazam_label.setPixmap(shazam_pixmap)
+                right_layout.addWidget(shazam_label)
+                right_layout.addWidget(QLabel("Shazam Artwork"))
+                right_layout.addWidget(QLabel(f"Size: {shazam_image.size[0]}x{shazam_image.size[1]}"))
+                
+                images_layout.addWidget(right_frame)
+                
+                # Add buttons
+                button_layout = QHBoxLayout()
+                layout.addLayout(button_layout)
+                
+                keep_btn = QPushButton("Keep Current")
+                keep_btn.clicked.connect(dialog.reject)
+                button_layout.addWidget(keep_btn)
+                
+                update_btn = QPushButton("Update Artwork")
+                update_btn.clicked.connect(lambda: self.handle_artwork_update(dialog, row, shazam_image))
+                button_layout.addWidget(update_btn)
+                
+                dialog.exec()
+                
+            except Exception as e:
+                error_msg = f"Error downloading Shazam artwork: {str(e)}"
+                print(error_msg)
+                traceback.print_exc()
+                QMessageBox.warning(self, "Error", error_msg)
+                
         except Exception as e:
-            print(f"Error comparing artwork: {str(e)}")
+            error_msg = f"Error comparing artwork: {str(e)}"
+            print(error_msg)
             traceback.print_exc()
+
+    def handle_artwork_update(self, dialog, row, image):
+        """Handle artwork update and dialog closing"""
+        if self.save_artwork(row, image):
+            dialog.accept()  # Close the dialog only if save was successful
 
     def check_playback(self):
         """Check if playback has ended and reset button state"""
@@ -1859,14 +1898,25 @@ class MetadataEditor(QMainWindow):
     def update_row_status(self, row, filepaths):
         """Update the status and commit columns for a row"""
         try:
-            # Get the entry data
-            entry = next((e for e in self.file_entries if e['row'] == row), None)
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                return
+                
+            # Find the entry in backend data using ID
+            entry_id = id_item.text()
+            entry = next((e for e in self.file_entries if e['id'] == entry_id), None)
             if not entry:
                 return
 
             # Check if any values have changed
             has_changes = False
-            for col, field in [(4, 'title'), (5, 'subtitle'), (6, 'artist'), (7, 'genre')]:
+            for col, field in [
+                (self.COL_TITLE, 'title'),
+                (self.COL_SUBTITLE, 'subtitle'),
+                (self.COL_ARTIST, 'artist'),
+                (self.COL_GENRE, 'genre')
+            ]:
                 item = self.table.item(row, col)
                 if item and item.text() != entry['original_values'][field]:
                     has_changes = True
@@ -1929,8 +1979,8 @@ class MetadataEditor(QMainWindow):
         
         # Show all rows
         total_count = len(self.file_entries)
-        for entry in self.file_entries:
-            self.table.setRowHidden(entry['row'], False)
+        for row in range(self.table.rowCount()):
+            self.table.setRowHidden(row, False)
             
         # Update display count to show all entries
         self.update_display_count(total_count, total_count)
@@ -1939,21 +1989,40 @@ class MetadataEditor(QMainWindow):
         """Handle cell value changes"""
         try:
             # Only process editable columns
-            if col not in [4, 5, 6, 7]:  # title, subtitle, artist, genre
+            if col not in [self.COL_TITLE, self.COL_SUBTITLE, self.COL_ARTIST, self.COL_GENRE]:
                 return
                 
-            entry = next((e for e in self.file_entries if e['row'] == row), None)
+            # Get the ID from the current row
+            id_item = self.table.item(row, self.COL_ID)
+            if not id_item:
+                return
+                
+            # Find the entry in backend data using ID
+            entry_id = id_item.text()
+            entry = next((e for e in self.file_entries if e['id'] == entry_id), None)
             if not entry:
                 return
                 
-            # Get current and original values
-            current_value = self.table.item(row, col).text()
-            field_map = {4: 'title', 5: 'subtitle', 6: 'artist', 7: 'genre'}
-            field = field_map[col]
-            original_value = entry['original_values'].get(field, '')
+            # Map column to field name
+            col_to_field = {
+                self.COL_TITLE: 'title',
+                self.COL_SUBTITLE: 'subtitle',
+                self.COL_ARTIST: 'artist',
+                self.COL_GENRE: 'genre'
+            }
             
-            if current_value != original_value:
-                # Update row status using existing method
+            field = col_to_field.get(col)
+            if not field:
+                return
+                
+            # Get the new value
+            item = self.table.item(row, col)
+            if not item:
+                return
+                
+            # Check if value has changed from original
+            if item.text() != entry['original_values'][field]:
+                # Update status and commit columns
                 self.update_row_status(row, entry['filepaths'])
                 
         except Exception as e:
@@ -2048,8 +2117,15 @@ class MetadataEditor(QMainWindow):
                     # Write visible rows
                     for row in range(self.table.rowCount()):
                         if not self.table.isRowHidden(row):
-                            # Get the entry data
-                            entry = next((e for e in self.file_entries if e['row'] == row), None)
+                            # Get the ID from the current row
+                            id_item = self.table.item(row, self.COL_ID)
+                            if not id_item:
+                                continue
+                            
+                            # Find the entry using ID
+                            entry_id = id_item.text()
+                            entry = next((e for e in self.file_entries if e['id'] == entry_id), None)
+                            
                             if entry:
                                 # Get file type from table
                                 type_item = self.table.item(row, 2)
@@ -2087,6 +2163,23 @@ class MetadataEditor(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to export data: {str(e)}")
             traceback.print_exc()
+
+    def find_row_by_id(self, entry_id):
+        """Find the current row number for a given entry ID"""
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, self.COL_ID)
+            if id_item and id_item.text() == entry_id:
+                return row
+        print(f"Debug: Could not find row for ID {entry_id}")
+        return -1
+
+    def verify_row_id_mapping(self):
+        """Debug helper to print current row-ID mappings"""
+        print("\nCurrent Row-ID Mappings:")
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, self.COL_ID)
+            if id_item:
+                print(f"Row {row}: ID {id_item.text()}")
 
 class PackSelectorDialog(QDialog):
     def __init__(self, parent, directories):
@@ -2524,7 +2617,7 @@ class HelpDialog(QDialog):
             ],
             "Actions Column": [
                 "• ... (three dots): Open song folder in file explorer",
-                "• ▶ (play): Preview song audio (if available)",
+                "   ▶ (play): Preview song audio (if available)",
                 "✎ (pencil): Open full metadata editor for advanced fields"
             ],
             "Metadata Editing": [
