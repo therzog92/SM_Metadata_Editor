@@ -272,6 +272,73 @@ class MetadataEditor(QMainWindow):
         self.main_layout.addWidget(self.display_count_frame)
         self.display_count_frame.hide()  # Hidden by default
         
+        # Set application-wide stylesheet for modern scrollbars
+        self.setStyleSheet("""
+            QScrollBar:vertical {
+                border: none;
+                background: #f0f0f0;
+                width: 10px;            /* Reduced from 14px */
+                margin: 0px 0px 0px 0px;
+                border-radius: 5px;     /* Reduced from 7px */
+            }
+
+            QScrollBar::handle:vertical {
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4a90e2, stop:0.5 #357abd, stop:1 #2c5a8c);
+                min-height: 30px;
+                border-radius: 5px;     /* Reduced from 7px */
+            }
+
+            QScrollBar::handle:vertical:hover {
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #5da1e9, stop:0.5 #4a90e2, stop:1 #357abd);
+            }
+
+            QScrollBar::add-line:vertical {
+                height: 0px;
+                subcontrol-position: bottom;
+                subcontrol-origin: margin;
+            }
+
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+                subcontrol-position: top;
+                subcontrol-origin: margin;
+            }
+
+            QScrollBar:horizontal {
+                border: none;
+                background: #f0f0f0;
+                height: 10px;           /* Reduced from 14px */
+                margin: 0px 0px 0px 0px;
+                border-radius: 5px;     /* Reduced from 7px */
+            }
+
+            QScrollBar::handle:horizontal {
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4a90e2, stop:0.5 #357abd, stop:1 #2c5a8c);
+                min-width: 30px;
+                border-radius: 5px;     /* Reduced from 7px */
+            }
+
+            QScrollBar::handle:horizontal:hover {
+                background: qlineargradient(spread:pad, x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #5da1e9, stop:0.5 #4a90e2, stop:1 #357abd);
+            }
+
+            QScrollBar::add-line:horizontal {
+                width: 0px;
+                subcontrol-position: right;
+                subcontrol-origin: margin;
+            }
+
+            QScrollBar::sub-line:horizontal {
+                width: 0px;
+                subcontrol-position: left;
+                subcontrol-origin: margin;
+            }
+        """)
+
     def setup_bulk_edit_controls(self):
         """Set up bulk edit controls"""
         self.bulk_edit_controls = QFrame()
@@ -698,7 +765,7 @@ class MetadataEditor(QMainWindow):
             
             # Run Shazam analysis
             try:
-                result = self.loop.run_until_complete(self.shazam.recognize_song(audio_path))
+                result = self.loop.run_until_complete(self.shazam.recognize(audio_path))
                 print(f"Debug: Shazam result: {result}")
                 
                 if result and 'track' in result:
@@ -2202,10 +2269,10 @@ class PackSelectorDialog(QDialog):
             layout = QVBoxLayout(self)
             
             # Warning label
-            warning_text = ("Warning: Selecting many packs may cause performance issues.\n"
-                          "Consider working with fewer packs at a time for better responsiveness.")
+            warning_text = ("Warning: Selecting all packs may cause performance issues.\n"
+                          "Consider working with a handful of packs at a time for better responsiveness.")
             warning_label = QLabel(warning_text)
-            warning_label.setStyleSheet("color: red; font-weight: bold;")
+            warning_label.setStyleSheet("color: blue; font-weight: bold;")
             warning_label.setWordWrap(True)
             layout.addWidget(warning_label)
             
@@ -2216,11 +2283,8 @@ class PackSelectorDialog(QDialog):
             scroll_layout = QGridLayout(scroll_widget)
             scroll_layout.setSpacing(4)
             
-            # Calculate button width
-            # Total width of dialog is typically around 800px
-            # Subtract margins (12px * 2), spacing between buttons (4px * 2)
-            # Divide by 3 for three columns
-            button_width = 250  # (800 - (12 * 2) - (4 * 2)) / 3
+
+            button_width = 240 
             
             # Create pack buttons with proper reference handling
             row = col = 0
