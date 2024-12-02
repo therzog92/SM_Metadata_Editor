@@ -1399,7 +1399,7 @@ class MetadataEditor(QMainWindow):
                                 shazam_data['images']['coverart'],
                                 os.path.dirname(entry_data['filepaths'][0])
                             )
-                        )
+                            )
                         artwork_btn.setStyleSheet("""
                             QPushButton {
                                 background-color: #4a90e2;
@@ -1791,10 +1791,23 @@ class MetadataEditor(QMainWindow):
                 print(f"Error cleaning up audio: {str(e)}")
 
     def closeEvent(self, event):
-        # Restore original stdout/stderr
-        sys.stdout = sys.__stdout__
-        sys.stderr = sys.__stderr__
-        super().closeEvent(event)
+        """Handle application closure"""
+        try:
+            # Stop any playing music
+            if pygame.mixer.get_init():
+                pygame.mixer.music.stop()
+                pygame.mixer.quit()
+            
+            # Restore original stdout/stderr if console was used
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
+            
+            # Accept the close event
+            event.accept()
+            
+        except Exception as e:
+            print(f"Error during closure: {str(e)}")
+            event.accept()  # Close anyway even if there's an error
 
     def __del__(self):
         """Destructor to ensure cleanup"""
@@ -1825,16 +1838,14 @@ class MetadataEditor(QMainWindow):
             # Get the ID from the current row
             id_item = self.table.item(row, self.COL_ID)
             if not id_item:
-                print("Error: No ID found for row", row)
                 return
                 
-            # Find the entry using ID instead of row
+            # Find the entry using ID
             entry_id = id_item.text()
             entry_data = next((e for e in self.file_entries if e['id'] == entry_id), None)
             if not entry_data:
-                print(f"Error: Could not find entry data for ID {entry_id}")
                 return
-            
+
             # Create dialog
             dialog = QDialog(self)
             dialog.setWindowTitle("Compare Artwork")
@@ -1855,27 +1866,29 @@ class MetadataEditor(QMainWindow):
             jacket_ref = metadata.get('JACKET', '').strip()
             local_image = None
             current_jacket_ref = None
-            
+
             if jacket_ref:
-                # First try exact path
-                exact_path = os.path.join(song_directory, jacket_ref)
-                if os.path.exists(exact_path):
-                    try:
-                        local_image = Image.open(exact_path)
-                        current_jacket_ref = jacket_ref
-                    except Exception as e:
-                        print(f"Error loading exact jacket path: {str(e)}")
-                else:
-                    # Try to find a file containing the jacket name (without extension)
-                    base_name = os.path.splitext(jacket_ref)[0].lower()
-                    for file in os.listdir(song_directory):
-                        if base_name in file.lower() and file.lower().endswith('.png'):
-                            try:
-                                local_image = Image.open(os.path.join(song_directory, file))
-                                current_jacket_ref = file
-                                break
-                            except Exception as e:
-                                print(f"Error loading matching jacket file: {str(e)}")
+                # Try to find any file containing the jacket name (without extension)
+                search_term = os.path.splitext(jacket_ref)[0].lower()
+                for file in os.listdir(song_directory):
+                    if search_term in file.lower() and file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        try:
+                            local_image = Image.open(os.path.join(song_directory, file))
+                            current_jacket_ref = file
+                            break
+                        except Exception as e:
+                            print(f"Failed to load file containing {search_term}: {str(e)}")
+
+            # If no image found from JACKET reference, look for any file with "jacket" in the name
+            if not local_image:
+                for file in os.listdir(song_directory):
+                    if 'jacket' in file.lower() and file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        try:
+                            local_image = Image.open(os.path.join(song_directory, file))
+                            current_jacket_ref = file
+                            break
+                        except Exception as e:
+                            print(f"Failed to load jacket file: {str(e)}")
             
             # Display current artwork if found
             if local_image:
