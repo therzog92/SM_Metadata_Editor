@@ -12,12 +12,14 @@ import requests
 from io import BytesIO
 import webbrowser
 import csv
+from io import StringIO
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QScrollArea, QFrame, QCheckBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QStyle, QFileDialog, QMessageBox,
-    QDialog, QToolButton, QMenu, QGridLayout, QSpacerItem, QSizePolicy
+    QDialog, QToolButton, QMenu, QGridLayout, QSpacerItem, QSizePolicy,
+    QTextEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor, QAction  # Add QAction here
@@ -1789,16 +1791,10 @@ class MetadataEditor(QMainWindow):
                 print(f"Error cleaning up audio: {str(e)}")
 
     def closeEvent(self, event):
-        """Handle cleanup when the application closes"""
-        try:
-            self.cleanup_audio()
-            if pygame.mixer.get_init():
-                pygame.mixer.quit()
-            if pygame.get_init():
-                pygame.quit()
-        except Exception as e:
-            print(f"Error during cleanup: {str(e)}")
-        event.accept()
+        # Restore original stdout/stderr
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        super().closeEvent(event)
 
     def __del__(self):
         """Destructor to ensure cleanup"""
@@ -2820,6 +2816,9 @@ class SettingsDialog(QDialog):
         self.parent = parent
         self.setWindowTitle("Settings")
         self.setMinimumWidth(300)
+        # Move console_window to the parent (MetadataEditor)
+        if not hasattr(self.parent, 'console_window'):
+            self.parent.console_window = None
         self.setup_ui()
         
     def setup_ui(self):
@@ -2836,6 +2835,11 @@ class SettingsDialog(QDialog):
         
         layout.addWidget(export_frame)
         
+        # Console section
+        console_btn = QPushButton("Open Console")
+        console_btn.clicked.connect(self.show_console)
+        layout.addWidget(console_btn)
+        
         # Add a stretch to push everything up
         layout.addStretch()
         
@@ -2843,6 +2847,56 @@ class SettingsDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
+        
+    def show_console(self):
+        if not self.parent.console_window:
+            self.parent.console_window = ConsoleWindow(self.parent)  # Parent is main window
+            # Redirect stdout to our console window
+            sys.stdout = self.parent.console_window
+            sys.stderr = self.parent.console_window
+        self.parent.console_window.show()
+
+class ConsoleWindow(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Console Output")
+        self.setMinimumSize(600, 400)
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Create text display
+        self.console_output = QTextEdit()
+        self.console_output.setReadOnly(True)
+        self.console_output.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                font-family: Consolas, monospace;
+                padding: 8px;
+            }
+        """)
+        layout.addWidget(self.console_output)
+        
+        # Add clear and close buttons
+        button_layout = QHBoxLayout()
+        
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self.console_output.clear)
+        button_layout.addWidget(clear_btn)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.hide)
+        button_layout.addWidget(close_btn)
+        
+        layout.addLayout(button_layout)
+        
+    def write(self, text):
+        self.console_output.append(text.rstrip())
+        
+    def flush(self):
+        pass
 
 def main():
     # Enable high DPI scaling
