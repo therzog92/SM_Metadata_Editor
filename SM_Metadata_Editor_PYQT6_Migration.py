@@ -1859,8 +1859,8 @@ class MetadataEditor(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load artwork: {str(e)}")
             
-        def save_artwork(self, row, image):
-            """Save artwork to song directory and update JACKET metadata"""
+    def save_artwork(self, row, image):
+        """Save artwork to song directory and update JACKET metadata"""
         try:
             # Get the ID from the current row
             id_item = self.table.item(row, self.COL_ID)
@@ -1874,15 +1874,21 @@ class MetadataEditor(QMainWindow):
             if not entry_data:
                 print(f"Error: Could not find entry data for ID {entry_id}")
                 return False
-            
-            # Get the directory from the first filepath
+               
             directory = os.path.dirname(entry_data['filepaths'][0])
             if not directory or not os.path.exists(directory):
                 print(f"Error: Invalid directory for ID {entry_id}")
                 return False
             
-            # Save with default name if no JACKET field exists
-            jacket_filename = 'SM_MDE_Jacket.png'
+            # Look for existing jacket file
+            existing_jacket = None
+            for file in os.listdir(directory):
+                if 'jacket' in file.lower() and file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    existing_jacket = file
+                    break
+            
+            # Use existing jacket name or default
+            jacket_filename = existing_jacket if existing_jacket else 'jacket.png'
             output_path = os.path.join(directory, jacket_filename)
             image.save(output_path)
             
