@@ -5,6 +5,15 @@ import shutil
 # Get the source directory
 source_dir = "C:/Users/Thoma/OneDrive/Documents/GitHub/SM_Metadata_Editor"
 
+# Define icon path relative to source directory
+icon_path = os.path.join(source_dir, "Assets", "icon.ico")
+
+# Verify icon exists
+if not os.path.exists(icon_path):
+    raise FileNotFoundError(f"Icon file not found at: {icon_path}")
+
+print(f"Using icon from: {icon_path}")
+
 # Define source files and output names
 builds = [
     {
@@ -33,10 +42,11 @@ for build in builds:
     PyInstaller.__main__.run([
         '--onefile',
         '--noconsole',
-        f'--name={build["output"]}',
         '--clean',
         '--noupx',
         '--noconfirm',
+        f'--icon={icon_path}',
+        f'--name={build["output"]}',
         source_file
     ])
 
