@@ -245,6 +245,9 @@ class MetadataUtil:
 class MetadataEditor(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.console_window = ConsoleWindow(self)  
+        sys.stdout = self.console_window  # redirect stdout
+        sys.stderr = self.console_window  # redirect stderr
         self.rainbow_mode = False
         self.setStyleSheet(MODERN_LIGHT_STYLE)
         self.setWindowTitle("StepMania Metadata Editor")
@@ -559,6 +562,17 @@ class MetadataEditor(QMainWindow):
         self.table.cellChanged.connect(self.on_cell_changed)
         self.table.horizontalHeader().sectionClicked.connect(self.sort_table)
         
+
+
+
+
+
+
+
+
+
+
+
     def create_file_entry_with_type(self, filepaths, file_type, parent_dir, title, subtitle, artist, genre, music_file):
         """Create a file entry with specified type in the table"""
         try:
@@ -1702,44 +1716,33 @@ class MetadataEditor(QMainWindow):
             self.apply_credit_filter(dialog.selected_credits)
 
     def apply_credit_filter(self, selected_credits):
-        if not selected_credits:
-            # Show all entries
-            for entry in self.file_entries:
-                self.table.setRowHidden(entry['row'], False)
-            self.statusBar().showMessage("Ready")
-            return
-
+        print(f"Selected credits: {selected_credits}")  # Debug print
         shown_count = 0
         total_count = len(self.file_entries)
         
         for entry in self.file_entries:
+            # Get metadata from the first filepath
+            metadata = MetadataUtil.read_metadata(entry['filepaths'][0])
+            song_credits = metadata.get('CREDITS', set())
+            print(f"Song credits for {entry['id']}: {song_credits}")  # Debug print
+            
+            # Show entry if any selected credit matches any song credit
             show_entry = False
-            entry_has_credits = False
-            entry_credits = set()
+            for credit in selected_credits:
+                if any(credit.lower() in song_credit.lower() for song_credit in song_credits):
+                    show_entry = True
+                    break
             
-            # Collect credits from all files in the entry
-            for filepath in entry['filepaths']:
-                metadata = MetadataUtil.read_metadata(filepath)
-                if metadata.get('CREDITS'):
-                    valid_credits = {credit.lower() for credit in metadata['CREDITS'] 
-                                   if credit and not credit.isspace()}
-                    if valid_credits:
-                        entry_has_credits = True
-                        entry_credits.update(valid_credits)
-        
-            # Check if we should show this entry
-            if not entry_has_credits and 'no credits! :(' in selected_credits:
-                # Show entries with no credits when "no credits! :(" is selected
-                show_entry = True
-                shown_count += 1
-            elif entry_credits and (entry_credits & selected_credits):
-                # Show entries that have any of the selected credits
-                show_entry = True
-                shown_count += 1
+            row = self.find_row_by_id(entry['id'])
+            print(f"Found row {row} for ID {entry['id']}")  # Debug print
             
-            self.table.setRowHidden(entry['row'], not show_entry)
+            if row != -1:
+                self.table.setRowHidden(row, not show_entry)
+                if show_entry:
+                    shown_count += 1
+                    print(f"Showing entry with credits: {song_credits}")  # Debug print
         
-        # Update display count
+        print(f"Total shown: {shown_count} out of {total_count}")  # Debug print
         self.update_display_count(shown_count, total_count)
         
         # Update status bar
@@ -3211,6 +3214,30 @@ class SettingsDialog(QDialog):
         export_group.setLayout(export_layout)
         layout.addWidget(export_group)
 
+
+        export_group.setLayout(export_layout)
+        layout.addWidget(export_group)
+
+        # Debug Settings
+        debug_group = QGroupBox("Debug Settings")
+        debug_layout = QVBoxLayout()
+        
+        self.toggle_console_btn = QPushButton(
+            "Show Console" if not self.parent.console_window.isVisible() else "Hide Console"
+        )
+        self.toggle_console_btn.clicked.connect(self.toggle_console)
+        debug_layout.addWidget(self.toggle_console_btn)
+        
+        debug_group.setLayout(debug_layout)
+        layout.addWidget(debug_group)
+
+
+
+
+
+
+
+
         # Close button at bottom
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
@@ -3240,7 +3267,13 @@ class SettingsDialog(QDialog):
                 "Error",
                 f"Failed to toggle audio: {str(e)}"
             )
-
+    def toggle_console(self):
+        if self.parent.console_window.isVisible():
+            self.parent.console_window.hide()
+            self.toggle_console_btn.setText("Show Console")
+        else:
+            self.parent.console_window.show()
+            self.toggle_console_btn.setText("Hide Console")
 class ConsoleWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
