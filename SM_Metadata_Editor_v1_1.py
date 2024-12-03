@@ -545,14 +545,95 @@ class MetadataEditor(QMainWindow):
             bulk_layout.addWidget(edit)
             self.bulk_fields[field] = edit
         
+        # Add regular apply button
         apply_button = QPushButton("Apply to Selected")
         apply_button.clicked.connect(self.apply_bulk_edit)
         bulk_layout.addWidget(apply_button)
+        
+        # Add separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        bulk_layout.addWidget(separator)
+        
+        # Add separate credit section
+        credit_label = QLabel("Credit")
+        self.credit_edit = QLineEdit()
+        self.credit_button = QPushButton("Update Credits")
+        self.credit_button.hide()  # Hidden by default
+        self.credit_button.setStyleSheet("background-color: #4a90e2; color: white;")
+        
+        # Show button when text is entered
+        self.credit_edit.textChanged.connect(self.toggle_credit_button)
+        self.credit_button.clicked.connect(self.apply_credit_update)
+        
+        bulk_layout.addWidget(credit_label)
+        bulk_layout.addWidget(self.credit_edit)
+        bulk_layout.addWidget(self.credit_button)
         
         # Add to main layout and hide initially
         self.main_layout.addWidget(self.bulk_edit_controls)
         self.bulk_edit_controls.hide()
         
+
+
+    def toggle_credit_button(self):
+        """Show/hide credit button based on text input"""
+        self.credit_button.setVisible(bool(self.credit_edit.text().strip()))
+
+    def apply_credit_update(self):
+        """Apply credit update to selected files"""
+        credit_value = self.credit_edit.text().strip()
+        if not credit_value:
+            return
+            
+        reply = QMessageBox.warning(
+            self,
+            "Confirm Credit Update",
+            "This will replace ALL existing credits with this new credit. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            success_count = 0
+            # Get selected rows
+            selected_rows = set(item.row() for item in self.table.selectedItems())
+            
+            for row in selected_rows:
+                # Get the ID from the current row
+                id_item = self.table.item(row, self.COL_ID)
+                if not id_item:
+                    continue
+                
+                # Find the entry using ID
+                entry_id = id_item.text()
+                entry = next((e for e in self.file_entries if e['id'] == entry_id), None)
+                
+                if entry and 'filepaths' in entry:
+                    for filepath in entry['filepaths']:
+                        try:
+                            if MetadataUtil.write_metadata(filepath, {'CREDIT': credit_value}):
+                                success_count += 1
+                        except Exception as e:
+                            print(f"Error updating credit for {filepath}: {str(e)}")
+                            continue
+            
+            if success_count > 0:
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Updated credits in {success_count} files."
+                )
+                self.credit_edit.clear()
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    "No files were updated. Make sure you have selected rows in the table."
+                )
+
+
+
     def setup_table(self):
         """Set up the main table widget"""
         self.table = QTableWidget()
