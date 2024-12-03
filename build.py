@@ -41,7 +41,6 @@ for build in builds:
     
     PyInstaller.__main__.run([
         '--onefile',
-        '--noconsole',
         '--clean',
         '--noupx',
         '--noconfirm',

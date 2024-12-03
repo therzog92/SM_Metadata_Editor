@@ -231,11 +231,26 @@ class MetadataUtil:
         if not content:
             return False
             
+        # Track if we've found and updated each field
+        updated_fields = {key: False for key in metadata}
+        title_line_index = None
+        
+        # First pass: update existing fields and find TITLE line
         for i, line in enumerate(content):
+            if line.startswith('#TITLE:'):
+                title_line_index = i
             for key, value in metadata.items():
                 if line.startswith(f'#{key}:'):
                     content[i] = f'#{key}:{value};\n'
-                    
+                    updated_fields[key] = True
+        
+        # Second pass: add missing fields after TITLE
+        if title_line_index is not None:
+            # Insert missing fields after TITLE in reverse order to maintain order
+            for key, value in reversed(metadata.items()):
+                if not updated_fields[key]:
+                    content.insert(title_line_index + 1, f'#{key}:{value};\n')
+        
         try:
             with open(filepath, 'w', encoding=encoding) as file:
                 file.writelines(content)
@@ -250,6 +265,8 @@ class MetadataEditor(QMainWindow):
         sys.stdout = self.console_window  # redirect stdout
         sys.stderr = self.console_window  #redirect stderr
         print("=== Console System Initialized ===")  # Test print
+        print("Closing this window will close the application")  # Test print
+        print("Currently a memory leak when using the noconsole option")  # Test print
 
         self.rainbow_mode = False
         self.setStyleSheet(MODERN_LIGHT_STYLE)
@@ -3441,43 +3458,51 @@ class ConsoleWindow(QDialog):
         pass
 
 def main():
-    # Enable high DPI scaling
-    if hasattr(Qt.ApplicationAttribute, 'AA_EnableHighDpiScaling'):
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
-    if hasattr(Qt.ApplicationAttribute, 'AA_UseHighDpiPixmaps'):
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
-    
-    app = QApplication(sys.argv)
-    app.setStyle('Fusion')
+    try:
+        # Enable high DPI scaling
+        if hasattr(Qt.ApplicationAttribute, 'AA_EnableHighDpiScaling'):
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
+        if hasattr(Qt.ApplicationAttribute, 'AA_UseHighDpiPixmaps'):
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+        
+        app = QApplication(sys.argv)
+        app.setStyle('Fusion')
 
-    # Force the color palette
-    palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor('#f0f0f0'))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor('#000000'))
-    palette.setColor(QPalette.ColorRole.Base, QColor('#ffffff'))
-    palette.setColor(QPalette.ColorRole.AlternateBase, QColor('#f7f7f7'))
-    palette.setColor(QPalette.ColorRole.Text, QColor('#000000'))
-    palette.setColor(QPalette.ColorRole.Button, QColor('#f0f0f0'))
-    palette.setColor(QPalette.ColorRole.ButtonText, QColor('#000000'))
-    palette.setColor(QPalette.ColorRole.Link, QColor('#0078d7'))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor('#0078d7'))
-    palette.setColor(QPalette.ColorRole.HighlightedText, QColor('#ffffff'))
+        # Force the color palette
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor('#f0f0f0'))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor('#000000'))
+        palette.setColor(QPalette.ColorRole.Base, QColor('#ffffff'))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor('#f7f7f7'))
+        palette.setColor(QPalette.ColorRole.Text, QColor('#000000'))
+        palette.setColor(QPalette.ColorRole.Button, QColor('#f0f0f0'))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor('#000000'))
+        palette.setColor(QPalette.ColorRole.Link, QColor('#0078d7'))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor('#0078d7'))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor('#ffffff'))
+        app.setPalette(palette)
+        
+        # Apply stylesheet and font
+        app.setStyleSheet(MODERN_LIGHT_STYLE)
+        font = app.font()
+        font.setPointSize(9)
+        app.setFont(font)
+        
+        # Create and show window
+        window = MetadataEditor()
+        window.show()
+        window.setWindowState(Qt.WindowState.WindowActive)
+        window.raise_()
+        window.activateWindow()
+        QApplication.processEvents()
+        
+        return app.exec()
 
-    # Apply the palette to the application
-    app.setPalette(palette)
-    
-    # Apply stylesheet after palette
-    app.setStyleSheet(MODERN_LIGHT_STYLE)
-    
-    # Set default font
-    font = app.font()
-    font.setPointSize(9)
-    app.setFont(font)
-    
-    window = MetadataEditor()
-    window.show()
-    
-    sys.exit(app.exec())
+    except Exception as e:
+        with open('error_log.txt', 'w') as f:
+            f.write(f"Error during startup: {str(e)}\n")
+            f.write(traceback.format_exc())
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
