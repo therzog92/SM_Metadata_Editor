@@ -3,7 +3,7 @@ import PyInstaller.__main__
 import shutil
 
 # Get the source directory
-source_dir = "C:/Users/Thoma/OneDrive/Documents/GitHub/SM_Metadata_Editor"
+source_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Define icon path relative to source directory
 icon_path = os.path.join(source_dir, "Assets", "icon.ico")

@@ -914,31 +914,38 @@ class MetadataEditor(QMainWindow):
 
             # Priority 1: Exact filepath
             if os.path.exists(music_path):
-                try:
-                    pygame.mixer.music.load(music_path)
-                    found_playable = True
-                    actual_path = music_path
-                    print(f"Using exact file: {music_path}")
-                except Exception as e:
-                    print(f"Failed to load exact file: {str(e)}")
+                actual_path = music_path
+                if self.audio_enabled:
+                    try:
+                        pygame.mixer.music.load(music_path)
+                        found_playable = True
+                        print(f"Using exact file: {music_path}")
+                    except Exception as e:
+                        print(f"Failed to load exact file: {str(e)}")
+                else:
+                    found_playable = True  # Consider it "playable" for Shazam purposes
 
             # Priority 2: Using filename as mask
-            if not found_playable and base_filename:
+            if not actual_path and base_filename:
                 mask_term = os.path.splitext(base_filename)[0]
                 for file in os.listdir(directory):
                     if mask_term in file and file.lower().endswith(tuple(SUPPORTED_AUDIO)):
-                        try:
-                            test_path = os.path.join(directory, file)
-                            pygame.mixer.music.load(test_path)
-                            found_playable = True
-                            actual_path = test_path
-                            print(f"Using masked file: {test_path}")
+                        test_path = os.path.join(directory, file)
+                        actual_path = test_path
+                        if self.audio_enabled:
+                            try:
+                                pygame.mixer.music.load(test_path)
+                                found_playable = True
+                                print(f"Using masked file: {test_path}")
+                                break
+                            except Exception as e:
+                                print(f"Failed to load masked file {file}: {str(e)}")
+                        else:
+                            found_playable = True  # Consider it "playable" for Shazam purposes
                             break
-                        except Exception as e:
-                            print(f"Failed to load masked file {file}: {str(e)}")
 
             # Priority 3: Any supported audio file (smallest one)
-            if not found_playable:
+            if not actual_path:
                 audio_files = []
                 for file in os.listdir(directory):
                     if file.lower().endswith(tuple(SUPPORTED_AUDIO)):
@@ -952,28 +959,35 @@ class MetadataEditor(QMainWindow):
                 if audio_files:
                     # Sort by size, then by path (for same-size files)
                     audio_files.sort(key=lambda x: (x[0], x[1]))
-                    try:
-                        pygame.mixer.music.load(audio_files[0][1])
-                        found_playable = True
-                        actual_path = audio_files[0][1]
-                        print(f"Using smallest audio file: {actual_path} ({audio_files[0][0]} bytes)")
-                    except Exception as e:
-                        print(f"Failed to load smallest audio file: {str(e)}")
+                    actual_path = audio_files[0][1]
+                    if self.audio_enabled:
+                        try:
+                            pygame.mixer.music.load(audio_files[0][1])
+                            found_playable = True
+                            print(f"Using smallest audio file: {actual_path} ({audio_files[0][0]} bytes)")
+                        except Exception as e:
+                            print(f"Failed to load smallest audio file: {str(e)}")
+                    else:
+                        found_playable = True  # Consider it "playable" for Shazam purposes
 
             if found_playable and actual_path:
-                pygame.mixer.music.play()
-                play_btn.setText("⏹")
-                play_btn.setEnabled(True)
-                self.current_playing = play_btn
+                if self.audio_enabled:
+                    pygame.mixer.music.play()
+                    play_btn.setText("⏹")
+                    play_btn.setEnabled(True)
+                    self.current_playing = play_btn
+                else:
+                    play_btn.setText("\U0001F507")  # Unicode for speaker with cancellation slash
+                    play_btn.setToolTip("Audio playback disabled")
                 
-                # If Shazam mode is active, analyze the file
+                # If Shazam mode is active, analyze the file regardless of audio playback status
                 if self.shazam_mode:
                     current_row = self.find_row_by_id(entry_id)
                     if current_row != -1:
                         self.run_shazam_analysis(actual_path, current_row)
             else:
-                print(f"No playable audio found in {directory}")
-                play_btn.setText("\U0001F507")  # Unicode for speaker with cancellation slash
+                print(f"No audio file found in {directory}")
+                play_btn.setText("\U0001F507")
                 play_btn.setEnabled(False)
                 play_btn.setToolTip("No audio file found")
 
