@@ -1822,68 +1822,7 @@ class MetadataEditor(QMainWindow):
             print(f"Error applying Shazam value: {str(e)}")
             traceback.print_exc()
 
-    def collect_credits(self):
-        """Collect all unique credits from loaded files"""
-        all_credits = set()  # Back to using a simple set
-        has_no_credits = False
-        
-        for entry in self.file_entries:
-            entry_has_credits = False
-            for filepath in entry['filepaths']:
-                metadata = MetadataUtil.read_metadata(filepath)
-                if 'CREDITS' in metadata:
-                    valid_credits = {credit.lower() for credit in metadata['CREDITS'] 
-                                   if credit and not credit.isspace()}
-                    if valid_credits:
-                        entry_has_credits = True
-                        all_credits.update(valid_credits)
-            
-            if not entry_has_credits:
-                has_no_credits = True
-        
-        if has_no_credits:
-            all_credits.add('no credits! :(')
-        
-        return sorted(all_credits)  # Simple sort since everything is already lowercase
-
-    def show_credit_search(self):
-        credits = self.collect_credits()
-        dialog = CreditSelectorDialog(self, sorted(credits))
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.apply_credit_filter(dialog.selected_credits)
-
-    def apply_credit_filter(self, selected_credits):
-        print(f"Selected credits: {selected_credits}")  # Debug print
-        shown_count = 0
-        total_count = len(self.file_entries)
-        
-        for entry in self.file_entries:
-            # Get metadata from the first filepath
-            metadata = MetadataUtil.read_metadata(entry['filepaths'][0])
-            song_credits = metadata.get('CREDITS', set())
-            print(f"Song credits for {entry['id']}: {song_credits}")  # Debug print
-            
-            # Show entry if any selected credit matches any song credit
-            show_entry = False
-            for credit in selected_credits:
-                if any(credit.lower() in song_credit.lower() for song_credit in song_credits):
-                    show_entry = True
-                    break
-            
-            row = self.find_row_by_id(entry['id'])
-            print(f"Found row {row} for ID {entry['id']}")  # Debug print
-            
-            if row != -1:
-                self.table.setRowHidden(row, not show_entry)
-                if show_entry:
-                    shown_count += 1
-                    print(f"Showing entry with credits: {song_credits}")  # Debug print
-        
-        print(f"Total shown: {shown_count} out of {total_count}")  # Debug print
-        self.update_display_count(shown_count, total_count)
-        
-        # Update status bar
-        self.statusBar().showMessage("Credit filter applied")
+    
 
     def clear_directories(self):
         """Clear all loaded directories and reset the table"""
@@ -2704,6 +2643,79 @@ class MetadataEditor(QMainWindow):
                     continue  # Continue to next song if one fails
                     
         return processed
+
+    def collect_credits(self):
+        """Collect all unique credits from loaded files"""
+        all_credits = set()
+        files_without_credits = set()  # Track files with no credits
+        
+        for entry in self.file_entries:
+            entry_has_credits = False
+            for filepath in entry['filepaths']:
+                metadata = MetadataUtil.read_metadata(filepath)
+                if 'CREDITS' in metadata and metadata['CREDITS']:
+                    valid_credits = {credit.lower() for credit in metadata['CREDITS'] 
+                                   if credit and not credit.isspace()}
+                    if valid_credits:
+                        entry_has_credits = True
+                        all_credits.update(valid_credits)
+        
+            if not entry_has_credits:
+                files_without_credits.add(entry['id'])
+        
+        # Add special "no credits" entry if any files lack credits
+        if files_without_credits:
+            all_credits.add('no credits! :(')
+            
+        return sorted(all_credits), files_without_credits  # Return both sets of data
+
+    def show_credit_search(self):
+        """Show the credit selector dialog"""
+        credits, files_without_credits = self.collect_credits()
+        dialog = CreditSelectorDialog(self, credits)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.apply_credit_filter(dialog.selected_credits)
+
+    def apply_credit_filter(self, selected_credits):
+        """Apply credit filter with special handling for 'no credits'"""
+        print(f"Selected credits: {selected_credits}")  # Debug print
+        shown_count = 0
+        total_count = len(self.file_entries)
+        
+        # Get files without credits when collecting credits
+        all_credits, files_without_credits = self.collect_credits()
+        
+        for entry in self.file_entries:
+            show_entry = False
+            
+            # Special handling for "no credits! :(" selection
+            if 'no credits! :(' in selected_credits:
+                if entry['id'] in files_without_credits:
+                    show_entry = True
+            
+            # Normal credit matching
+            if not show_entry:  # Only check if not already shown
+                metadata = MetadataUtil.read_metadata(entry['filepaths'][0])
+                song_credits = metadata.get('CREDITS', set())
+                for credit in selected_credits:
+                    if credit != 'no credits! :(' and any(credit.lower() in song_credit.lower() for song_credit in song_credits):
+                        show_entry = True
+                        break
+            
+            row = self.find_row_by_id(entry['id'])
+            print(f"Found row {row} for ID {entry['id']}")  # Debug print
+            
+            if row != -1:
+                self.table.setRowHidden(row, not show_entry)
+                if show_entry:
+                    shown_count += 1
+                    print(f"Showing entry with credits: {song_credits}")  # Debug print
+        
+        print(f"Total shown: {shown_count} out of {total_count}")  # Debug print
+        self.update_display_count(shown_count, total_count)
+        
+        # Update status bar
+        self.statusBar().showMessage("Credit filter applied")
 
 class PackSelectorDialog(QDialog):
     def __init__(self, parent, directories):
