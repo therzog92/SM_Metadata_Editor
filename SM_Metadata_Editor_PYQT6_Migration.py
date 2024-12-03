@@ -1,5 +1,6 @@
 import sys
 import os
+import platform
 import subprocess
 import pygame
 import traceback
@@ -13,7 +14,7 @@ from io import BytesIO
 import webbrowser
 import csv
 from io import StringIO
-
+from PyQt6 import QtCore
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QScrollArea, QFrame, QCheckBox, QTableWidget,
@@ -22,7 +23,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QGroupBox, QButtonGroup, QRadioButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor, QAction
+from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor, QAction, QPalette
 
 # Constants
 SUPPORTED_EXTENSIONS = {'.sm', '.ssc'}
@@ -247,7 +248,9 @@ class MetadataEditor(QMainWindow):
         super().__init__()
         self.console_window = ConsoleWindow(self)  
         sys.stdout = self.console_window  # redirect stdout
-        sys.stderr = self.console_window  # redirect stderr
+        sys.stderr = self.console_window  #redirect stderr
+        print("=== Console System Initialized ===")  # Test print
+
         self.rainbow_mode = False
         self.setStyleSheet(MODERN_LIGHT_STYLE)
         self.setWindowTitle("StepMania Metadata Editor")
@@ -569,9 +572,27 @@ class MetadataEditor(QMainWindow):
 
 
 
+    def write_debug(self, message):
+        """Write debug information to the app console"""
+        if hasattr(self, 'console_window'):
+            self.console_window.console_output.append(message)
+            self.console_window.console_output.repaint()
+            # Only print to standard console if not already redirected
+            if sys.stdout != self.console_window:
+                print(message)
 
+    def write_operation_debug(self, operation_name, message, error=None):
+        """Write operation-specific debug information"""
+        debug_msg = f"Operation [{operation_name}]: {message}"
+        if error:
+            debug_msg += f" - Error: {error}"
 
-
+        if hasattr(self, 'console_window'):
+            self.console_window.console_output.append(debug_msg)
+            self.console_window.console_output.repaint()
+            # Only print to standard console if not already redirected
+            if sys.stdout != self.console_window:
+                print(debug_msg)
 
     def create_file_entry_with_type(self, filepaths, file_type, parent_dir, title, subtitle, artist, genre, music_file):
         """Create a file entry with specified type in the table"""
@@ -1941,7 +1962,7 @@ class MetadataEditor(QMainWindow):
         
         # Open folder button
         folder_btn = QToolButton()
-        folder_btn.setText("...")
+        folder_btn.setText("📁")
         folder_btn.setMinimumWidth(30)
         folder_btn.clicked.connect(
             lambda: self.open_file_location(os.path.dirname(filepaths[0])))
@@ -1949,7 +1970,7 @@ class MetadataEditor(QMainWindow):
         
         # Play button
         play_btn = QToolButton()
-        play_btn.setText("▶")
+        play_btn.setText("▶️")
         play_btn.setMinimumWidth(30)
         if music_file:
             # Create the full music path
@@ -1967,7 +1988,7 @@ class MetadataEditor(QMainWindow):
         
         # Edit button
         edit_btn = QToolButton()
-        edit_btn.setText("✎")
+        edit_btn.setText("✏️")
         edit_btn.setMinimumWidth(30)
         edit_btn.clicked.connect(lambda: self.edit_metadata(filepaths))  # Changed to edit_metadata
         action_layout.addWidget(edit_btn)
@@ -3214,10 +3235,6 @@ class SettingsDialog(QDialog):
         export_group.setLayout(export_layout)
         layout.addWidget(export_group)
 
-
-        export_group.setLayout(export_layout)
-        layout.addWidget(export_group)
-
         # Debug Settings
         debug_group = QGroupBox("Debug Settings")
         debug_layout = QVBoxLayout()
@@ -3230,13 +3247,6 @@ class SettingsDialog(QDialog):
         
         debug_group.setLayout(debug_layout)
         layout.addWidget(debug_group)
-
-
-
-
-
-
-
 
         # Close button at bottom
         close_btn = QPushButton("Close")
@@ -3267,6 +3277,7 @@ class SettingsDialog(QDialog):
                 "Error",
                 f"Failed to toggle audio: {str(e)}"
             )
+
     def toggle_console(self):
         if self.parent.console_window.isVisible():
             self.parent.console_window.hide()
@@ -3274,6 +3285,114 @@ class SettingsDialog(QDialog):
         else:
             self.parent.console_window.show()
             self.toggle_console_btn.setText("Hide Console")
+            
+            # Print debug information when console is opened
+            print("\n=== Debug Information ===")
+            print(f"Python Version: {sys.version}")
+            print(f"Operating System: {os.name} - {sys.platform}")
+            print(f"Working Directory: {os.getcwd()}")
+            print(f"Executable Path: {sys.executable}")
+            
+            # System info
+            print("\n=== System Information ===")
+            print(f"CPU Architecture: {platform.machine()}")
+            print(f"Windows Version: {platform.platform()}")
+            
+            # Application info
+            print("\n=== Application State ===")
+            print(f"Rainbow Mode: {self.parent.rainbow_mode}")
+            print(f"Audio Enabled: {self.parent.audio_enabled}")
+            print(f"Window Size: {self.parent.size()}")
+            
+            # File system info
+            print("\n=== File System ===")
+            try:
+                print(f"Write Permission in Current Dir: {os.access(os.getcwd(), os.W_OK)}")
+                print(f"Read Permission in Current Dir: {os.access(os.getcwd(), os.R_OK)}")
+                print(f"Current User: {os.getlogin()}")
+            except Exception as e:
+                print(f"Error checking permissions: {e}")
+                
+            # Qt info
+            print("\n=== Qt Information ===")
+            print(f"Qt Version: {QtCore.QT_VERSION_STR}")
+            print(f"PyQt Version: {QtCore.PYQT_VERSION_STR}")
+            
+            # Check loaded modules
+            print("\n=== Loaded Modules ===")
+            for name, module in sorted(sys.modules.items()):
+                if hasattr(module, '__version__'):
+                    print(f"{name}: {module.__version__}")
+    def update_theme(self):
+        if self.light_mode_radio.isChecked():
+            self.parent.rainbow_mode = False
+            self.parent.setStyleSheet(MODERN_LIGHT_STYLE)
+        elif self.rainbow_mode_radio.isChecked():
+            self.parent.rainbow_mode = True
+            self.parent.setStyleSheet(MODERN_RAINBOW_STYLE)
+
+    def toggle_audio(self):
+        try:
+            if self.parent.audio_enabled:
+                pygame.mixer.quit()
+                self.parent.audio_enabled = False
+                self.toggle_audio_btn.setText("Audio Disabled")
+            else:
+                pygame.mixer.init()
+                self.parent.audio_enabled = True
+                self.toggle_audio_btn.setText("Audio Enabled")
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"Failed to toggle audio: {str(e)}"
+            )
+def toggle_console(self):
+    if self.parent.console_window.isVisible():
+        self.parent.console_window.hide()
+        self.toggle_console_btn.setText("Show Console")
+    else:
+        self.parent.console_window.show()
+        self.toggle_console_btn.setText("Hide Console")
+        
+        # Write directly to the console output
+        self.parent.console_window.console_output.append("\n=== Debug Information ===")
+        self.parent.console_window.console_output.append(f"Python Version: {sys.version}")
+        self.parent.console_window.console_output.append(f"Operating System: {os.name} - {sys.platform}")
+        self.parent.console_window.console_output.append(f"Working Directory: {os.getcwd()}")
+        self.parent.console_window.console_output.append(f"Executable Path: {sys.executable}")
+        
+        self.parent.console_window.console_output.append("\n=== System Information ===")
+        self.parent.console_window.console_output.append(f"CPU Architecture: {platform.machine()}")
+        self.parent.console_window.console_output.append(f"Windows Version: {platform.platform()}")
+        
+        self.parent.console_window.console_output.append("\n=== Application State ===")
+        self.parent.console_window.console_output.append(f"Rainbow Mode: {self.parent.rainbow_mode}")
+        self.parent.console_window.console_output.append(f"Audio Enabled: {self.parent.audio_enabled}")
+        self.parent.console_window.console_output.append(f"Window Size: {self.parent.size()}")
+        
+        self.parent.console_window.console_output.append("\n=== File System ===")
+        try:
+            self.parent.console_window.console_output.append(
+                f"Write Permission in Current Dir: {os.access(os.getcwd(), os.W_OK)}")
+            self.parent.console_window.console_output.append(
+                f"Read Permission in Current Dir: {os.access(os.getcwd(), os.R_OK)}")
+            self.parent.console_window.console_output.append(
+                f"Current User: {os.getlogin()}")
+        except Exception as e:
+            self.parent.console_window.console_output.append(f"Error checking permissions: {e}")
+        
+        self.parent.console_window.console_output.append("\n=== Qt Information ===")
+        self.parent.console_window.console_output.append(f"Qt Version: {QtCore.QT_VERSION_STR}")
+        self.parent.console_window.console_output.append(f"PyQt Version: {QtCore.PYQT_VERSION_STR}")
+        
+        self.parent.console_window.console_output.append("\n=== Loaded Modules ===")
+        for name, module in sorted(sys.modules.items()):
+            if hasattr(module, '__version__'):
+                self.parent.console_window.console_output.append(f"{name}: {module.__version__}")
+        
+        # Force update
+        self.parent.console_window.console_output.repaint()
 class ConsoleWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3311,7 +3430,12 @@ class ConsoleWindow(QDialog):
         layout.addLayout(button_layout)
         
     def write(self, text):
-        self.console_output.append(text.rstrip())
+        try:
+            print(f"DEBUG: Writing to console: {text!r}", file=sys.__stdout__)  # Debug to real stdout
+            self.console_output.append(text.rstrip())
+            self.console_output.repaint()
+        except Exception as e:
+            print(f"ERROR in console write: {e}", file=sys.__stdout__)
         
     def flush(self):
         pass
@@ -3324,16 +3448,32 @@ def main():
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
     
     app = QApplication(sys.argv)
-    
-    # Set application style
     app.setStyle('Fusion')
+
+    # Force the color palette
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor('#f0f0f0'))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor('#000000'))
+    palette.setColor(QPalette.ColorRole.Base, QColor('#ffffff'))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor('#f7f7f7'))
+    palette.setColor(QPalette.ColorRole.Text, QColor('#000000'))
+    palette.setColor(QPalette.ColorRole.Button, QColor('#f0f0f0'))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor('#000000'))
+    palette.setColor(QPalette.ColorRole.Link, QColor('#0078d7'))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor('#0078d7'))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor('#ffffff'))
+
+    # Apply the palette to the application
+    app.setPalette(palette)
+    
+    # Apply stylesheet after palette
     app.setStyleSheet(MODERN_LIGHT_STYLE)
+    
     # Set default font
     font = app.font()
     font.setPointSize(9)
     app.setFont(font)
     
-    # Create and show main window
     window = MetadataEditor()
     window.show()
     
