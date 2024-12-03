@@ -17,12 +17,13 @@ print(f"Using icon from: {icon_path}")
 # Define source files and output names
 builds = [
     {
-        "source": "SM_Metadata_Editor.py",
-        "output": "SM_Metadata_Editor"
+        "source": "SM_Metadata_Editor_v1_1.py",
+        "output": "SM_Metadata_Editor_v1_1"
     },
     {
-        "source": "SM_Metadata_Editor_PYQT6_Migration.py",
-        "output": "SM_Metadata_Editor_v1_1"
+        "source": "SM_Metadata_Editor_v1_1.py",
+        "output": "SM_Metadata_Editor_v1_1_WithConsole",
+        "console": True
     }
 ]
 
@@ -39,7 +40,7 @@ for build in builds:
     print(f"\nBuilding {build['output']}...")
     source_file = os.path.join(source_dir, build['source'])
     
-    PyInstaller.__main__.run([
+    options = [
         '--onefile',
         '--clean',
         '--noupx',
@@ -47,7 +48,13 @@ for build in builds:
         f'--icon={icon_path}',
         f'--name={build["output"]}',
         source_file
-    ])
+    ]
+    
+    # Add noconsole option only if console is not explicitly True
+    if not build.get('console', False):
+        options.insert(3, '--noconsole')
+    
+    PyInstaller.__main__.run(options)
 
     # Move the executable
     exe_name = f"{build['output']}.exe"
