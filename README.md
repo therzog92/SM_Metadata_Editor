@@ -57,7 +57,6 @@ A powerful, simple tool for managing StepMania song metadata with an intuitive i
 ## 🎨 Interface Guide
 
 ### Main Table Columns
-- ☑️ Selection checkbox
 - 🔧 Actions (folder, play, edit)
 - 📄 File type (SM/SSC)
 - 📁 Pack name
