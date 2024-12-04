@@ -681,7 +681,7 @@ class MetadataEditor(QMainWindow):
             if col == 1:  # Actions column
                 self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             # Make non-editable columns read-only
-            if col not in [4, 5, 6, 7]:  # Not Title, Subtitle, Artist, or Genre
+            if col not in [3,4, 5, 6, 7]:  # Not Title, Subtitle, Artist, or Genre
                 self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
         
         # Connect signals
@@ -1847,8 +1847,7 @@ class MetadataEditor(QMainWindow):
                 self.bulk_edit_btn.hide()
             if hasattr(self, 'search_credits_button') and self.search_credits_button:
                 self.search_credits_button.hide()
-            if hasattr(self, 'commit_all_button') and self.commit_all_button:
-                self.commit_all_button.hide()
+
             
             # Reset status bar and display count
             self.statusBar().showMessage("Ready")
@@ -2217,6 +2216,8 @@ class MetadataEditor(QMainWindow):
                 local_label = QLabel()
                 local_pixmap = ImageQt.toqpixmap(local_image.resize((200, 200)))
                 local_label.setPixmap(local_pixmap)
+                local_label.repaint()
+                QApplication.processEvents()
                 left_layout.addWidget(local_label)
                 left_layout.addWidget(QLabel(f"Current: {current_jacket_ref}"))
                 left_layout.addWidget(QLabel(f"Size: {local_image.size[0]}x{local_image.size[1]}"))
@@ -2240,6 +2241,8 @@ class MetadataEditor(QMainWindow):
                 shazam_label = QLabel()
                 shazam_pixmap = ImageQt.toqpixmap(shazam_image.resize((200, 200)))
                 shazam_label.setPixmap(shazam_pixmap)
+                shazam_label.repaint()
+                QApplication.processEvents()
                 right_layout.addWidget(shazam_label)
                 right_layout.addWidget(QLabel("Shazam Artwork"))
                 right_layout.addWidget(QLabel(f"Size: {shazam_image.size[0]}x{shazam_image.size[1]}"))
@@ -2646,12 +2649,19 @@ class MetadataEditor(QMainWindow):
 
     async def process_songs_with_shazam(self, progress_label, total):
         processed = 0
+        batch_size = 10  # Process 10 songs at a time
         
-        for row in range(self.table.rowCount()):
+        # Get list of visible rows
+        visible_rows = [row for row in range(self.table.rowCount()) 
+                       if not self.table.isRowHidden(row)]
+        
+        # Process in batches
+        for i in range(0, len(visible_rows), batch_size):
             if self.cancelled:
                 break
                 
-            if not self.table.isRowHidden(row):
+            batch = visible_rows[i:i + batch_size]
+            for row in batch:
                 processed += 1
                 remaining = total - processed
                 est_seconds = remaining * 1.75
@@ -2689,6 +2699,9 @@ class MetadataEditor(QMainWindow):
                 except Exception as e:
                     print(f"Error processing row {row}: {str(e)}")
                     continue  # Continue to next song if one fails
+            
+            # Add a longer pause between batches
+            await asyncio.sleep(3)
                     
         return processed
 
