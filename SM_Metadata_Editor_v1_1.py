@@ -1854,6 +1854,7 @@ class MetadataEditor(QMainWindow):
             self.statusBar().showMessage("Ready")
             self.update_display_count(0, 0)
 
+            
     def sort_table(self, column):
         """Sort table by clicked column header"""
         try:
@@ -1864,6 +1865,25 @@ class MetadataEditor(QMainWindow):
             # Store current sort order
             field_map = {3: 'pack', 4: 'title', 5: 'subtitle', 6: 'artist', 7: 'genre'}
             field = field_map[column]
+            
+            # Store widgets and their states before sorting
+            stored_widgets = {}
+            for row in range(self.table.rowCount()):
+                id_item = self.table.item(row, self.COL_ID)
+                if id_item:
+                    entry_id = id_item.text()
+                    commit_widget = self.table.cellWidget(row, self.COL_COMMIT)
+                    status_widget = self.table.cellWidget(row, self.COL_STATUS)
+                    
+                    if commit_widget:
+                        commit_btn = commit_widget.findChild(QPushButton)
+                        if commit_btn:
+                            stored_widgets[entry_id] = {
+                                'commit': commit_btn.isEnabled(),
+                                'status': status_widget,
+                                'filepaths': next((e['filepaths'] for e in self.file_entries if e['id'] == entry_id), None)
+                            }
+            
             self.sort_reverse[field] = not self.sort_reverse[field]
             
             # Temporarily enable sorting
@@ -1871,10 +1891,38 @@ class MetadataEditor(QMainWindow):
             
             # Sort using Qt's built-in functionality
             self.table.sortItems(column, Qt.SortOrder.AscendingOrder if not self.sort_reverse[field] 
-                                       else Qt.SortOrder.DescendingOrder)
+                                    else Qt.SortOrder.DescendingOrder)
             
             # Immediately disable sorting after the sort is complete
             self.table.setSortingEnabled(False)
+            
+            # Restore widgets and their states
+            for row in range(self.table.rowCount()):
+                id_item = self.table.item(row, self.COL_ID)
+                if id_item:
+                    entry_id = id_item.text()
+                    if entry_id in stored_widgets:
+                        widget_data = stored_widgets[entry_id]
+                        
+                        # Recreate commit button if it was enabled
+                        if widget_data['commit'] and widget_data['filepaths']:
+                            commit_container = QWidget()
+                            commit_layout = QHBoxLayout(commit_container)
+                            commit_layout.setContentsMargins(0, 0, 0, 0)
+                            
+                            commit_btn = QPushButton("Commit?")
+                            commit_btn.setEnabled(True)
+                            # Use entry_id instead of row for the commit action
+                            commit_btn.clicked.connect(
+                                lambda checked, eid=entry_id, fps=widget_data['filepaths']: 
+                                self.commit_changes(self.find_row_by_id(eid), fps)
+                            )
+                            commit_layout.addWidget(commit_btn)
+                            self.table.setCellWidget(row, self.COL_COMMIT, commit_container)
+                        
+                        # Restore status widget if it exists
+                        if widget_data['status']:
+                            self.table.setCellWidget(row, self.COL_STATUS, widget_data['status'])
             
             # Update file_entries row references
             for entry in self.file_entries:
