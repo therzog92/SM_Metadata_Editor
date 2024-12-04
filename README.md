@@ -1,84 +1,119 @@
-# Stepmania Metadata Editor
-# v1.1 available for testing!
+# StepMania Metadata Editor
+## Version 1.1 - Now with PyQt6!
+
+A powerful, simple tool for managing StepMania song metadata with an intuitive interface and advanced features.
+
+![Untitled design](https://github.com/user-attachments/assets/a21b1ef3-b811-4798-8d0d-f2afde1ad379)
 
 
-# v1.0
 
-A user-friendly tool for managing and editing metadata in Stepmania song files (.sm and .ssc formats).
+## 🌟 New in 1.1
+- Complete rewrite using PyQt6 for a modern, responsive interface
+- Enhanced performance for large song collections
+- Real-time search filtering
+- Improved bulk editing capabilities
+- Better audio playback controls
+- Enhanced Shazam integration with artwork comparison
+- Rainbow mode! 🌈
 
-## Features
-- 🎵 Browse and edit multiple Stepmania song files from a single screen
-- 🎧 Preview song audio directly in the application
-- 📝 Batch edit metadata across multiple files
-- 🔍 Sort songs by title, subtitle, artist, or pack
+## ✨ Features
+
+### Core Features
+- 📝 Edit multiple StepMania files (.sm/.ssc) simultaneously
+- 🎵 Preview audio directly in the application
+- 📊 Sort by any column (pack, title, artist, etc.)
+- 🔍 Real-time search filtering
 - 📁 Quick access to file locations
-- 🎵 ShazamIO integration for automatic song identification (and jacket artwork matching!) Goodbye, random genre values!
-- 🔍 Filter by #CREDIT to find songs with your favorite creator easily
-- 💫 Simple, intuitive interface. Select your song directory and pick which packs you want to view!
+- 💾 Commit changes individually or all at once
 
-## Quick Start
-1. Run the application
-2. Click "Select Directory" to choose your Stepmania songs folder
-3. Browse and edit your song files:
-   - Use "..." to open the directory of that specific song
-   - Use "▶" to preview the song
-   - Use "✎" to open the full metadata editor
-   - Edit title, subtitle, artist, or genre directly in the main view
 
-## Interface Guide
+### Advanced Features
+- 🎵 Shazam Integration
+  - Automatic song identification
+  - Album artwork detection and comparison
+  - One-click metadata updates
+  - (Verify before commiting as Shazam isn't always right! Tim McGraw definitely isn't rave music!)
+- 📝 Bulk Editing
+  - Edit multiple songs simultaneously
+  - Update credits across multiple files
+  - Smart selection tools
+- 🖼️ Artwork Management
+  - Compare current and Shazam artwork
+  - Auto-update jacket images
+  - Maintain 1:1 aspect ratio
+- 📝 Export your data to CSV.
 
-### Main View Columns
-- Actions: File location, play audio, and metadata editor buttons
-- Type: File format (SM/SSC)
-- Parent Directory: The song pack name
-- Title: Song title (editable)
-- Subtitle: Song subtitle (editable)
-- Artist: Song artist (editable)
-- Genre: Song genre (editable)
-- Status: Shows commit status for changes
+## 🚀 Quick Start
 
-### Editing Metadata
-There are three ways to edit metadata:
+1. Launch the application
+2. Click "Pick Directory" to select your StepMania songs folder
+3. Choose which packs to load
+4. Start editing:
+   - 📁 Open file location
+   - ▶️ Preview audio
+   - ✏️ Edit metadata
+   - 💾 Commit changes
 
-1. **Quick Edit**: Directly edit fields in the main view
-   - Modified fields will be highlighted in blue
-   - Click "Commit?" to save changes
-   - Successfully saved changes will be highlighted in green
+## 🎨 Interface Guide
 
-2. **Bulk Edit**: Edit multiple songs at once
-   - Click "Bulk Edit" to enter bulk edit mode
-   - Select songs using checkboxes
-   - Edit subtitle, artist, or genre for all selected songs
-   - Changes are applied to all selected entries
+### Main Table Columns
+- 🔧 Actions (folder, play, edit)
+- 📄 File type (SM/SSC)
+- 📁 Pack name
+- 🎵 Title
+- 📝 Subtitle
+- 👤 Artist
+- 🎼 Genre
+- ⚠️ Status
+- 💾 Commit
 
-3. **Shazam Integration**: Automatic song identification
-   - Click "Shazam Mode" to enable
-   - Play a song to automatically identify and fill metadata
-   - Confirm changes before committing
-   - The app will notify you if Shazam mode is attempted without internet
-   - Shazam mode will be disabled until connection is restored
+### Editing Modes
 
-## Requirements
-If running from source code:
-- Python 3.x
+#### Direct Edit
+- Click any editable field
+- Make changes
+- Commit individually or all at once
+
+#### Bulk Edit
+1. Click "Bulk Edit"
+2. Select multiple songs
+3. Edit shared fields
+4. Apply changes to all selected songs
+
+#### Shazam Mode
+1. Enable "Shazam Mode"
+2. Play any song
+3. Review suggested metadata
+4. Accept or reject changes (left click to accept, right click to say no!)
+5. Optionally update artwork
+   ***Sorting will cause your suggestions to not be clickable if you didn't click before sorting. You will need to re-analyze the song or make your decision before. 
+
+## 🛠️ Technical Requirements
+
+### Running from Source
+- Python 3.8+
 - Required packages:
-  - tkinter
+  - PyQt6
   - pygame
   - shazamio
   - nest_asyncio
+  - Pillow
+  - requests
 
-Or simply run the precompiled exe file.
+### Precompiled Version
+- Windows (can be compiled in Mac as well)
+- No additional dependencies required
 
-## Credits
-This project uses several open-source libraries:
-- [ShazamIO](https://github.com/dotX12/ShazamIO) - For song identification
-- [Pygame](https://www.pygame.org/) - For audio playback
-- [Tkinter](https://docs.python.org/3/library/tkinter.html) - For the graphical interface
 
-## Notes
-- The program is provided as-is and may have limitations
-- Contributions and improvements are welcome
-- Some features (like ShazamIO) require an internet connection
+## 🙏 Credits
 
-## License
-This project is open source and available under the MIT License.
+Built with:
+- [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
+- [ShazamIO](https://github.com/dotX12/ShazamIO)
+- [Pygame](https://www.pygame.org/)
+- [Pillow](https://python-pillow.org/)
+
+
+---
+
+Made with ❤️ for the StepMania community
